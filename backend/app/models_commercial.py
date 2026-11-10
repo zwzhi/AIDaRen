@@ -250,6 +250,7 @@ class CvBudgetPool(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), default="default")
+    scope: Mapped[str] = mapped_column(String(8), default="mock")  # mock|real：演示预算与真实授权隔离
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
     reserved_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
@@ -259,12 +260,13 @@ class CvBudgetPool(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     @classmethod
-    async def ensure_default(cls, db, *, total: Decimal, created_by: int) -> "CvBudgetPool":
+    async def ensure_default(cls, db, *, total: Decimal, created_by: int,
+                             scope: str = "mock") -> "CvBudgetPool":
         pool = (await db.execute(
-            __import__("sqlalchemy").select(cls).where(cls.name == "default")
+            __import__("sqlalchemy").select(cls).where(cls.name == "default", cls.scope == scope)
         )).scalar_one_or_none()
         if pool is None:
-            pool = cls(name="default", total_amount=total, created_by=created_by)
+            pool = cls(name="default", scope=scope, total_amount=total, created_by=created_by)
             db.add(pool)
             await db.flush()
         return pool
@@ -406,6 +408,7 @@ class CvExport(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     production_id: Mapped[int] = mapped_column(ForeignKey("cv_productions.id"), index=True)
+    kind: Mapped[str] = mapped_column(String(24), default="master")  # master|partial_preview
     master_path: Mapped[str] = mapped_column(String(512))
     subtitled_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
     total_adopt_ms: Mapped[int] = mapped_column(Integer, default=0)

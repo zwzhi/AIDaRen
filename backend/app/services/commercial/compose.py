@@ -133,12 +133,19 @@ async def compose_production(
     return ComposeResult(master_path=str(master_path), total_adopt_ms=total_ms, clips=len(selections))
 
 
+def _ffmpeg_subtitle_arg(srt_path: str) -> str:
+    """subtitles 滤镜路径转义：Windows 盘符冒号与反斜杠按滤镜语法处理。"""
+    posix = str(srt_path).replace("\\", "/")
+    escaped = posix.replace(":", "\:")
+    return f"subtitles='{escaped}'"
+
+
 def burn_subtitles(master_path: str, srt_path: str) -> str:
     """烧录字幕：生成独立副本，母版保持不变（SUBTITLE_POLICY）。"""
     target = str(Path(master_path).with_name(Path(master_path).stem + "-subtitled.mp4"))
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
-        "-i", master_path, "-vf", f"subtitles={srt_path}", "-c:a", "copy", target,
+        "-i", master_path, "-vf", _ffmpeg_subtitle_arg(srt_path), "-c:a", "copy", target,
     ]
     result = subprocess.run(cmd, capture_output=True)
     if result.returncode != 0:

@@ -6,11 +6,12 @@ Mock：commercial_mock_mode=true 时解析/适配/报价/生成走显著标记�
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -423,6 +424,7 @@ def _build_unit_params(production: CvProduction, unit: dict[str, Any], user_id: 
         "audio_required": True,
         "params_version": 1,
         "production_id": production.id,
+        "unit_key": unit.get("unit_key") or "",
         "team_id": None,
         "attempt_id": "",
     }
@@ -565,9 +567,17 @@ async def get_production(
         select(CvGenerationAttempt).where(CvGenerationAttempt.production_id == production.id)
         .order_by(CvGenerationAttempt.id)
     )).scalars().all()
+    # 费用只聚合本作品的 attempt（attempt_ref = attempt.id）
+    own_attempt_ids = [a.id for a in attempts]
     ledger = (await db.execute(
-        select(CvUsageLedger).order_by(CvUsageLedger.id.desc()).limit(50)
-    )).scalars().all()
+        select(CvUsageLedger).where(CvUsageLedger.attempt_ref.in_(
+            [str(i) for i in own_attempt_ids] or ["-1"])
+        ).order_by(CvUsageLedger.id.desc())
+    )).scalars().all() if own_attempt_ids else []
+    latest_export = (await db.execute(
+        select(CvExport).where(CvExport.production_id == production.id)
+        .order_by(CvExport.id.desc()).limit(1)
+    )).scalar_one_or_none()
     total_usd = sum((e.amount for e in ledger if e.currency == "USD"), Decimal("0"))
     pending = sum((e.amount for e in ledger if e.settlement_status == "SETTLEMENT_PENDING"), Decimal("0"))
     return {
@@ -578,10 +588,14 @@ async def get_production(
         "plan": production.plan_json,
         "attempts": [{
             "id": a.id, "client_request_id": a.client_request_id,
+            "attempt_no": a.attempt_no,
+            "unit_key": (a.params_json or {}).get("unit_key"),
             "status": a.status, "prediction_id": a.provider_prediction_id,
             "output_asset_key": a.output_asset_key,
             "error_code": a.error_code, "error_message": a.error_message,
         } for a in attempts],
+        "latest_export": ({"id": latest_export.id, "kind": latest_export.kind or "master"}
+                          if latest_export else None),
         "costs": {
             "total_usd": str(total_usd), "pending_usd": str(pending),
             "settlement_note": "待结算金额为估算（真实账单以联调后对账为准）",
@@ -627,9 +641,36 @@ class ComposeSelection(BaseModel):
 class ComposeBody(BaseModel):
     selections: list[ComposeSelection]
     subtitles: bool = True
+    complete: bool = True  # true=完整成片（必需单元必须全部合格）；false=部分预览
 
 
-@router.post("/productions/{production_id}/compose", summary="仅合成审核通过镜头")
+async def _unit_coverage_error(
+    db: AsyncSession, production: CvProduction,
+) -> str | None:
+    """校验已确认计划的每个必需单元都有 REVIEW_APPROVED 的 attempt；缺失则返回说明。"""
+    plan = dict(production.plan_json or {})
+    units = plan.get("units") or []
+    if not units:
+        return "制作计划缺少生成单元，请先完成适配与计划"
+    attempts = (await db.execute(
+        select(CvGenerationAttempt).where(
+            CvGenerationAttempt.production_id == production.id,
+            CvGenerationAttempt.status == "REVIEW_APPROVED",
+        )
+    )).scalars().all()
+    covered_unit_keys = {
+        unit_key for unit_key in (
+            (a.params_json or {}).get("unit_key") for a in attempts
+        ) if unit_key
+    }
+    # 早期 attempt 参数无 unit_key 时回退按 attempt 数量粗粒度覆盖（保持兼容）
+    missing = [u["unit_key"] for u in units if u.get("unit_key") not in covered_unit_keys]
+    if missing and len(attempts) < len(units):
+        return "、".join(missing)
+    return None
+
+
+@router.post("/productions/{production_id}/compose", summary="合成（完整成片需全部必需单元合格）")
 async def compose(
     production_id: int, body: ComposeBody,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
@@ -637,6 +678,15 @@ async def compose(
     from app.services.commercial.compose import build_subtitle_draft, compose_production
 
     production = await _get_production(db, production_id, user)
+    # 完整成片：必需单元缺合格版本 → 服务端阻断（不得静默跳过缺失镜头）
+    if body.complete:
+        missing = await _unit_coverage_error(db, production)
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"以下必需生成单元没有审核合格的版本，不能导出完整成片：{missing}。"
+                       "请先重做并审核通过，或选择部分预览导出（将明确标记为部分预览）。",
+            )
     pairs = []
     shots_meta = []
     for selection in body.selections:
@@ -665,21 +715,30 @@ async def compose(
             lines.append(f"{i}\n{_ts(item['start_ms'])} --> {_ts(item['end_ms'])}\n{item['text']}\n")
         srt_content = "\n".join(lines)
 
+    kind = "master" if body.complete else "partial_preview"
     export = CvExport(
-        production_id=production.id, master_path=result.master_path,
+        production_id=production.id, kind=kind, master_path=result.master_path,
         total_adopt_ms=result.total_adopt_ms,
-        selections_json={"items": [s.model_dump() for s in body.selections]},
+        selections_json={
+            "items": [s.model_dump() for s in body.selections],
+            "plan_units": (production.plan_json or {}).get("units") or [],
+            "complete": body.complete,
+        },
         srt_content=srt_content, created_by=user.id,
     )
     db.add(export)
-    production.status = "composed"
+    if body.complete:
+        production.status = "composed"
+    else:
+        production.status = production.status if production.status == "composed" else "partial_preview"
     await db.commit()
     return {"export_id": export.id, "master_path": result.master_path,
-            "total_adopt_ms": result.total_adopt_ms, "subtitles": bool(srt_content)}
+            "total_adopt_ms": result.total_adopt_ms, "subtitles": bool(srt_content),
+            "kind": kind}
 
 
-@router.get("/exports/{export_id}/download", summary="下载成片母版")
-async def download_export(
+@router.get("/exports/{export_id}", summary="导出详情（含字幕草稿/类型/烧录版）")
+async def get_export(
     export_id: int,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
@@ -687,17 +746,84 @@ async def download_export(
     if export is None:
         raise HTTPException(status_code=404, detail="导出不存在")
     _ensure_writer(export, user)
+    return {
+        "id": export.id, "production_id": export.production_id,
+        "kind": export.kind or "master",
+        "total_adopt_ms": export.total_adopt_ms,
+        "srt_content": export.srt_content,
+        "srt_aligned": False,  # 草稿默认未对齐，需人工校对后烧录
+        "subtitled_path": export.subtitled_path,
+        "selections": export.selections_json,
+        "created_at": export.created_at.isoformat() if export.created_at else None,
+    }
+
+
+class BurnBody(BaseModel):
+    srt_content: str = ""  # 空则使用已存草稿
+
+
+@router.post("/exports/{export_id}/burn", summary="烧录字幕（生成独立烧录版，不改母版）")
+async def burn_export(
+    export_id: int, body: BurnBody,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    from app.services.commercial.compose import burn_subtitles
+
+    export = await db.get(CvExport, export_id)
+    if export is None:
+        raise HTTPException(status_code=404, detail="导出不存在")
+    _ensure_writer(export, user)
+    srt = (body.srt_content or "").strip() or (export.srt_content or "")
+    if not srt.strip():
+        raise HTTPException(status_code=422, detail="没有可烧录的字幕内容（请先校对字幕草稿）")
+    import tempfile
     from pathlib import Path as _Path
 
-    path = _Path(export.master_path)
+    # srt 放到输出同目录（避免临时目录中文/空格路径再叠加转义负担）
+    srt_dir = _Path(export.master_path).parent
+    srt_file = srt_dir / f"export-{export.id}-subtitle.srt"
+    srt_file.write_text(srt, encoding="utf-8")
+    srt_path = str(srt_file)
+    try:
+        target = await asyncio.get_event_loop().run_in_executor(
+            None, burn_subtitles, export.master_path, srt_path,
+        )
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=422, detail=f"烧录失败（只重跑后期，不触发生成）：{exc}") from exc
+    finally:
+        pass  # srt 留档于导出目录，便于复现烧录参数
+    export.subtitled_path = target
+    await db.commit()
+    return {"export_id": export.id, "subtitled_path": target, "master_immutable": True}
+
+
+@router.get("/exports/{export_id}/download", summary="下载成片（母版或烧录版）")
+async def download_export(
+    export_id: int,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+    request: Request = None,
+):
+    export = await db.get(CvExport, export_id)
+    if export is None:
+        raise HTTPException(status_code=404, detail="导出不存在")
+    _ensure_writer(export, user)
+    from pathlib import Path as _Path
+
+    variant = "subtitled" if (request.query_params.get("variant") == "subtitled") else "master"
+    raw_path = export.subtitled_path if variant == "subtitled" else export.master_path
+    if not raw_path:
+        raise HTTPException(status_code=404, detail="烧录版尚未生成（请先烧录字幕）")
+    path = _Path(raw_path)
     if not path.is_file():
         raise HTTPException(status_code=404, detail="成片文件缺失")
-    return FileResponse(path, media_type="video/mp4", filename=f"export-{export.id}.mp4")
+    suffix = "-subtitled" if variant == "subtitled" else ""
+    return FileResponse(path, media_type="video/mp4", filename=f"export-{export.id}{suffix}.mp4")
 
 
 # ---------------------------------------------------------------- 预算（管理）
 class BudgetPoolBody(BaseModel):
     total_usd: Decimal
+    scope: str = "mock"  # mock=演示预算；real=真实付费授权（互不继承）
 
 
 @router.post("/budget", summary="设置测试总预算（管理员）")
@@ -707,7 +833,11 @@ async def set_budget(
 ):
     if (user.role or "user") != "admin":
         raise HTTPException(status_code=403, detail="需要管理员权限")
-    pool = await CvBudgetPool.ensure_default(db, total=body.total_usd, created_by=user.id)
+    if body.scope not in ("mock", "real"):
+        raise HTTPException(status_code=422, detail="scope 仅支持 mock/real")
+    pool = await CvBudgetPool.ensure_default(
+        db, total=body.total_usd, created_by=user.id, scope=body.scope,
+    )
     pool.total_amount = body.total_usd
     await db.commit()
     return {"pool_id": pool.id, "total_usd": str(pool.total_amount),

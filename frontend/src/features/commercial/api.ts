@@ -39,6 +39,7 @@ export type ProductionDetail = {
   resolution_id: string; aspect_ratio: string
   plan: { shots: Shot[]; units: Unit[] | null; pending_review?: { shot_key: string; reason: string }[] } | null
   attempts: AttemptOut[]
+  latest_export?: { id: number; kind: string } | null
   costs: { total_usd: string; pending_usd: string; settlement_note: string; mock: boolean }
 }
 
@@ -101,13 +102,24 @@ export const commercialApi = {
     request<{ overall: string }>(`/api/commercial/attempts/${attemptId}/review`, {
       method: 'POST', body: JSON.stringify({ dimensions, speech_required: speechRequired }),
     }),
-  compose: (productionId: number, selections: { attempt_id: number; ranges: number[][] }[], subtitles = true) =>
-    request<{ export_id: number; total_adopt_ms: number; subtitles: boolean }>(
+  compose: (productionId: number, selections: { attempt_id: number; ranges: number[][] }[],
+            complete = true, subtitles = true) =>
+    request<{ export_id: number; total_adopt_ms: number; subtitles: boolean; kind: string }>(
       `/api/commercial/productions/${productionId}/compose`, {
-        method: 'POST', body: JSON.stringify({ selections, subtitles }),
+        method: 'POST', body: JSON.stringify({ selections, subtitles, complete }),
       }),
-  setBudget: (totalUsd: string) =>
-    request<{ pool_id: number; total_usd: string; paused: boolean }>('/api/commercial/budget', {
-      method: 'POST', body: JSON.stringify({ total_usd: totalUsd }),
+  getExport: (exportId: number) =>
+    request<{ id: number; kind: string; srt_content: string | null; srt_aligned: boolean; subtitled_path: string | null; total_adopt_ms: number }>(
+      `/api/commercial/exports/${exportId}`),
+  burnExport: (exportId: number, srtContent: string) =>
+    request<{ export_id: number; subtitled_path: string }>(`/api/commercial/exports/${exportId}/burn`, {
+      method: 'POST', body: JSON.stringify({ srt_content: srtContent }) }),
+  getProviderSettings: () =>
+    request<{ atlas_api_key: string; has_atlas_api_key: boolean; gemini_analysis_model_id: string; h3_developer_reference_model_id: string; commercial_verified_models: string; commercial_mock_mode: boolean; commercial_paid_execution_enabled: boolean }>('/api/admin/settings/models'),
+  saveProviderSettings: (payload: Record<string, unknown>) =>
+    request('/api/admin/settings/models', { method: 'PATCH', body: JSON.stringify(payload) }),
+  setBudget: (totalUsd: string, scope: string = 'mock') =>
+    request<{ pool_id: number; total_usd: string; scope: string; paused: boolean }>('/api/commercial/budget', {
+      method: 'POST', body: JSON.stringify({ total_usd: totalUsd, scope }),
     }),
 }

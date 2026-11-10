@@ -142,12 +142,24 @@ def _ensure_not_expired(quote: CvCostQuote, now: datetime | None = None) -> None
 async def _reserve_with_pool_row(
     db: AsyncSession, *, quote: CvCostQuote, created_by: int
 ) -> CvBudgetReservation:
-    """池行 FOR UPDATE + 条件判断：可用额度不足即拒绝。"""
+    """池行 FOR UPDATE + 条件判断：可用额度不足即拒绝。
+
+    池按当前模式选择：Mock 走 scope=mock 演示池，真实模式走 scope=real 池；
+    两池互不继承（模拟预算批准不算真实付费授权）。
+    """
+    from app.services.commercial import mock_provider
+
+    scope = "mock" if mock_provider.mock_enabled() else "real"
     pool = (await db.execute(
-        select(CvBudgetPool).where(CvBudgetPool.name == "default").with_for_update()
+        select(CvBudgetPool).where(
+            CvBudgetPool.name == "default", CvBudgetPool.scope == scope,
+        ).with_for_update()
     )).scalar_one_or_none()
     if pool is None:
-        raise BudgetError("BUDGET_NOT_CONFIGURED", "预算池未初始化，请管理员配置测试总预算")
+        raise BudgetError(
+            "BUDGET_NOT_CONFIGURED",
+            f"{'演示' if scope == 'mock' else '真实'}预算池未初始化，请管理员配置对应模式的总预算",
+        )
     if pool.paused:
         raise BudgetError("BUDGET_PAUSED", "预算池已暂停（可能因真实费用超预留），请补充预算后恢复")
     available = pool.total_amount - pool.settled_amount - pool.reserved_amount
@@ -230,9 +242,17 @@ async def approve_and_reserve(
             "报价后参数发生变化（素材/台词/时长/分辨率/音频），原确认已失效，请重新报价",
         )
     reservation = await _reserve_with_pool_row(db, quote=quote, created_by=created_by)
+    from sqlalchemy import func as _func
+
+    max_no = (await db.execute(
+        select(_func.max(CvGenerationAttempt.attempt_no)).where(
+            CvGenerationAttempt.production_id == production_id,
+            CvGenerationAttempt.client_request_id == client_request_id,
+        )
+    )).scalar_one_or_none()
     attempt = CvGenerationAttempt(
         production_id=production_id, generation_unit_id=generation_unit_id,
-        attempt_no=1, client_request_id=client_request_id, payload_hash=payload_hash,
+        attempt_no=int(max_no or 0) + 1, client_request_id=client_request_id, payload_hash=payload_hash,
         params_json=dict(params),  # 计划参数快照：报价与生成同源
         quote_id=quote.id, reservation_id=reservation.id,
         status="APPROVED", created_by=created_by,

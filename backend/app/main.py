@@ -442,6 +442,12 @@ async def _apply_schema_patches(engine_override: AsyncEngine | None = None) -> N
             await conn.execute(text("ALTER TABLE cv_generation_attempts ADD COLUMN output_asset_key VARCHAR(128)"))
         if cgac and "params_json" not in cgac:
             await conn.execute(text("ALTER TABLE cv_generation_attempts ADD COLUMN params_json JSON"))
+        cex = await _pg_columns(conn, "cv_exports")
+        if cex and "kind" not in cex:
+            await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN kind VARCHAR(24) DEFAULT 'master'"))
+        cbp = await _pg_columns(conn, "cv_budget_pools")
+        if cbp and "scope" not in cbp:
+            await conn.execute(text("ALTER TABLE cv_budget_pools ADD COLUMN scope VARCHAR(8) DEFAULT 'mock'"))
 
 
 async def bootstrap_admins() -> None:

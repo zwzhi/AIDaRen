@@ -4,7 +4,7 @@
  * 页面明确标识“测试/模拟”状态，不冒充真实联调。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { commercialApi, uploadAsset, type ProductItem, type TemplateItem, type ActorItem, type Unit } from './api'
 import { requestResponse } from '../../api/client'
 
@@ -215,13 +215,73 @@ export function CommercialProductsPage() {
   )
 }
 
+/* 单镜重做入口：修改台词 → 重新报价 → 确认费用 → 新 attempt（旧版本与费用保留） */
+function RedoEntry({ unitKey, productionId, attempts, dialogueOverride, onDialogueChange, onDone }: {
+  unitKey: string; productionId: number
+  attempts: { id: number; unit_key?: string | null; status: string; attempt_no?: number }[]
+  dialogueOverride?: string
+  onDialogueChange: (v: string) => void
+  onDone: () => void
+}) {
+  const [busy, setBusy] = useState<'quote' | 'generate' | null>(null)
+  const [quote, setQuote] = useState<{ id: number; amount: string } | null>(null)
+  const [msg, setMsg] = useState('')
+  const mine = attempts.filter(a => a.unit_key === unitKey)
+  const latest = mine[mine.length - 1]
+  const redo = async () => {
+    setBusy('quote'); setMsg('')
+    try {
+      const q = await commercialApi.quote(productionId, unitKey)
+      setQuote({ id: q.quote_id, amount: q.amount }); setBusy(null)
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); setBusy(null) }
+  }
+  const confirmRedo = async () => {
+    setBusy('generate')
+    try {
+      // 新 client_request_id = 新 attempt（新预算）；参数若变（台词）报价指纹已失效旧批准
+      const reqId = `redo-${productionId}-${unitKey}-${Date.now()}`
+      const r = await commercialApi.generate(productionId, unitKey, quote!.id, reqId)
+      setMsg(`已创建新尝试 #${r.attempt_id}（状态 ${r.attempt_status}）；旧版本与费用保留`)
+      setQuote(null); onDone()
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) } finally { setBusy(null) }
+  }
+  if (!latest) return null
+  return (
+    <div style={{ marginTop: 10, borderTop: '1px dashed #ddd', paddingTop: 8 }}>
+      <span style={{ fontSize: 12, color: '#666' }}>
+        本单元尝试：{mine.map(a => `#${a.attempt_no ?? a.id}(${a.status})`).join('、')}
+      </span>
+      <div style={{ marginTop: 6 }}>
+        <input style={{ ...input, width: 320 }} placeholder="重做台词（留空沿用原台词；修改后旧批准自动失效）"
+          value={dialogueOverride ?? ''} onChange={e => onDialogueChange(e.target.value)} />
+        {!quote
+          ? <button style={btnAlt} disabled={busy != null} onClick={redo}>重做此单元 → 重新报价</button>
+          : <>
+              <span style={{ marginRight: 8 }}>新报价 ${quote.amount}（模拟价）</span>
+              <button style={btn} disabled={busy != null} onClick={confirmRedo}>确认费用并重做（新尝试）</button>
+            </>}
+      </div>
+      {msg && <p style={{ color: '#2f6f4f', margin: '6px 0 0' }}>{msg}</p>}
+    </div>
+  )
+}
+
 /* ---------------------------------------------------------------- 制作工作台 */
 export function CommercialStudioPage() {
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [actors, setActors] = useState<ActorItem[]>([])
   const [products, setProducts] = useState<ProductItem[]>([])
   const [sel, setSel] = useState({ template: 0, actorVersion: 0, voice: 0, productVersion: 0 })
-  const [productionId, setProductionId] = useState<number | null>(null)
+  const [productionId, setProductionIdState] = useState<number | null>(null)
+  // URL 关联作品 ID：刷新/重进自动恢复服务端状态（只读 GET，不重建不重提交）
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [redoDialogue, setRedoDialogue] = useState<Record<string, string>>({})
+  const setProductionId = (pid: number | null) => {
+    setProductionIdState(pid)
+    if (pid == null) setSearchParams({}, { replace: true })
+    else setSearchParams({ production: String(pid) }, { replace: true })
+  }
+  const restoredRef = useRef(false)
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof commercialApi.getProduction>> | null>(null)
   const [quotes, setQuotes] = useState<Record<string, { id: number; amount: string }>>({})
   const [msg, setMsg] = useState('')
@@ -232,6 +292,20 @@ export function CommercialStudioPage() {
     commercialApi.listActors().then(r => setActors(r.items))
     commercialApi.listProducts().then(r => setProducts(r.items))
   }, [])
+  // 刷新恢复：?production=N → 自动载入服务端已保存的计划/绑定/任务状态
+  useEffect(() => {
+    if (restoredRef.current) return
+    const fromUrl = Number(searchParams.get('production'))
+    if (fromUrl > 0) { restoredRef.current = true; setProductionIdState(fromUrl) }
+  }, [searchParams])
+  // 未保存的重做台词不静默丢失：关闭/刷新前提示
+  useEffect(() => {
+    const hasDraft = Object.values(redoDialogue).some(v => v && v.trim())
+    if (!hasDraft) return
+    const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', guard)
+    return () => window.removeEventListener('beforeunload', guard)
+  }, [redoDialogue])
   const refreshDetail = useCallback((pid: number) => {
     commercialApi.getProduction(pid).then(setDetail).catch(e => setMsg(String(e instanceof Error ? e.message : e)))
   }, [])
@@ -328,6 +402,10 @@ export function CommercialStudioPage() {
                       </>
                     )}
                   </div>
+                  <RedoEntry unitKey={u.unit_key} productionId={productionId}
+                    attempts={detail?.attempts || []} dialogueOverride={redoDialogue[u.unit_key]}
+                    onDialogueChange={v => setRedoDialogue(prev => ({ ...prev, [u.unit_key]: v }))}
+                    onDone={() => refreshDetail(productionId)} />
                 </div>
               ))}
             </Section>
@@ -343,11 +421,23 @@ export function CommercialTasksPage() {
   const [productionId, setProductionId] = useState<number | null>(null)
   const [queryId, setQueryId] = useState<string>('')
   const [exportId, setExportId] = useState<number | null>(null)
+  const [exportDetail, setExportDetail] = useState<{ id: number; kind: string; srt_content: string | null; srt_aligned: boolean; subtitled_path: string | null; total_adopt_ms: number } | null>(null)
+  const [srtDraft, setSrtDraft] = useState('')
+  const [burnMsg, setBurnMsg] = useState('')
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof commercialApi.getProduction>> | null>(null)
   const [msg, setMsg] = useState('')
   const refresh = useCallback(() => {
-    if (productionId) commercialApi.getProduction(productionId).then(setDetail).catch(e => setMsg(String(e instanceof Error ? e.message : e)))
-  }, [productionId])
+    if (productionId) commercialApi.getProduction(productionId).then(d => {
+      setDetail(d)
+      // 刷新后从服务端恢复最近导出（含字幕面板与烧录版状态）
+      if (d.latest_export && exportId == null) {
+        setExportId(d.latest_export.id)
+        commercialApi.getExport(d.latest_export.id).then(ex => {
+          setExportDetail(ex); setSrtDraft(ex.srt_content || '')
+        }).catch(() => {})
+      }
+    }).catch(e => setMsg(String(e instanceof Error ? e.message : e)))
+  }, [productionId, exportId])
   useEffect(refresh, [refresh])
 
   const review = async (attemptId: number, pass: boolean) => {
@@ -357,14 +447,30 @@ export function CommercialTasksPage() {
     }
     try { await commercialApi.review(attemptId, dims); refresh() } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
+  const downloadExport = async (id: number, variant: 'master' | 'subtitled') => {
+    const { API_BASE } = await import('../../api/client')
+    const q = variant === 'subtitled' ? '?variant=subtitled' : ''
+    const resp = await fetch(`${API_BASE}/api/commercial/exports/${id}/download${q}`, {
+      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+    })
+    if (!resp.ok) { setMsg('下载失败'); return }
+    const blob = await resp.blob()
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    a.download = `export-${id}${variant === 'subtitled' ? '-subtitled' : ''}.mp4`
+    a.click()
+    URL.revokeObjectURL(a.href)
+  }
   const compose = async () => {
     if (!detail) return
     const approved = detail.attempts.filter(a => a.status === 'REVIEW_APPROVED')
     if (!approved.length) { setMsg('没有通过审核的镜头，不能合成'); return }
     try {
-      const r = await commercialApi.compose(detail.id, approved.map(a => ({ attempt_id: a.id, ranges: [[0, 4000]] })))
+      const r = await commercialApi.compose(detail.id, approved.map(a => ({ attempt_id: a.id, ranges: [[0, 4000]] })), true)
       setExportId(r.export_id)
-      setMsg(`合成完成：导出 #${r.export_id}（采用总长 ${(r.total_adopt_ms / 1000).toFixed(1)}s）`)
+      setMsg(`合成完成：导出 #${r.export_id}（${r.kind === 'partial_preview' ? '部分预览' : '完整成片'}，采用总长 ${(r.total_adopt_ms / 1000).toFixed(1)}s）`)
+      const ex = await commercialApi.getExport(r.export_id)
+      setExportDetail(ex); setSrtDraft(ex.srt_content || '')
       refresh()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
@@ -398,19 +504,38 @@ export function CommercialTasksPage() {
             <button style={btn} onClick={compose}>合成已审核镜头（FFmpeg）并生成字幕</button>
           )}
           {exportId != null && (
-            <button style={btnAlt} onClick={async () => {
-              const { API_BASE } = await import('../../api/client')
-              const resp = await fetch(`${API_BASE}/api/commercial/exports/${exportId}/download`, {
-                headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-              })
-              if (!resp.ok) { setMsg('下载失败'); return }
-              const blob = await resp.blob()
-              const a = document.createElement('a')
-              a.href = URL.createObjectURL(blob)
-              a.download = `export-${exportId}.mp4`
-              a.click()
-              URL.revokeObjectURL(a.href)
-            }}>下载成片（导出 #{exportId}）</button>
+            <div style={{ ...card, borderTop: '1px solid #eee' }}>
+              <b>导出 #{exportId}</b>
+              {exportDetail?.kind === 'partial_preview' && (
+                <span style={{ ...tag, background: '#fff3e0', color: '#b26a00' }}>部分预览（非完整成片）</span>
+              )}
+              <div style={{ marginTop: 8, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button style={btnAlt} onClick={() => downloadExport(exportId, 'master')}>下载无字幕母版</button>
+                {exportDetail?.subtitled_path
+                  ? <button style={btnAlt} onClick={() => downloadExport(exportId, 'subtitled')}>下载烧录字幕版</button>
+                  : <span style={{ fontSize: 12, color: '#888', alignSelf: 'center' }}>烧录版未生成</span>}
+              </div>
+              {exportDetail && (
+                <div style={{ marginTop: 10 }}>
+                  {exportDetail.srt_aligned === false && (
+                    <p style={{ color: '#b26a00', background: '#fff8e1', padding: '4px 8px', borderRadius: 6, fontSize: 12 }}>
+                      字幕为未校对草稿（时间来自计划采用区间），烧录前请人工校对；烧录只生成独立副本，不改母版、不触发重新生成。
+                    </p>
+                  )}
+                  <textarea style={{ width: '100%', minHeight: 120, fontFamily: 'monospace', fontSize: 12 }}
+                    value={srtDraft} onChange={e => setSrtDraft(e.target.value)} />
+                  <button style={btn} onClick={async () => {
+                    setBurnMsg('烧录中…')
+                    try {
+                      await commercialApi.burnExport(exportId, srtDraft)
+                      const ex = await commercialApi.getExport(exportId)
+                      setExportDetail(ex); setBurnMsg('烧录完成（母版未改动，可下载烧录版）')
+                    } catch (e) { setBurnMsg(e instanceof Error ? e.message : String(e)) }
+                  }}>校对完成并烧录字幕</button>
+                  {burnMsg && <span style={{ marginLeft: 8, fontSize: 12 }}>{burnMsg}</span>}
+                </div>
+              )}
+            </div>
           )}
         </Section>
       )}
@@ -422,7 +547,30 @@ export function CommercialTasksPage() {
 export function CommercialSettingsPage() {
   const [total, setTotal] = useState('')
   const [msg, setMsg] = useState('')
-  const [pool, setPool] = useState<{ total_usd: string; paused: boolean } | null>(null)
+  const [pool, setPool] = useState<{ total_usd: string; scope: string; paused: boolean } | null>(null)
+  // 安全配置（管理员）：密钥只写不读；保存不触发任何付费调用
+  const [apiKey, setApiKey] = useState('')
+  const [geminiId, setGeminiId] = useState('')
+  const [h3Id, setH3Id] = useState('')
+  const [provider, setProvider] = useState<{ has_atlas_api_key: boolean; gemini_analysis_model_id: string; h3_developer_reference_model_id: string; commercial_verified_models: string; commercial_mock_mode: boolean; commercial_paid_execution_enabled: boolean } | null>(null)
+  const [providerMsg, setProviderMsg] = useState('')
+  useEffect(() => {
+    commercialApi.getProviderSettings().then(s => {
+      setProvider(s); setGeminiId(s.gemini_analysis_model_id || ''); setH3Id(s.h3_developer_reference_model_id || '')
+    }).catch(() => setProvider(null))  // 非管理员/未配置时静默
+  }, [])
+  const saveProvider = async () => {
+    try {
+      await commercialApi.saveProviderSettings({
+        ...(apiKey.trim() ? { atlas_api_key: apiKey.trim() } : {}),
+        gemini_analysis_model_id: geminiId.trim(),
+        h3_developer_reference_model_id: h3Id.trim(),
+      })
+      setApiKey('')
+      const s = await commercialApi.getProviderSettings(); setProvider(s)
+      setProviderMsg('已保存（密钥加密存库，不回传显示；未发起任何付费调用）')
+    } catch (e) { setProviderMsg(e instanceof Error ? e.message : String(e)) }
+  }
   const set = async () => {
     try { const r = await commercialApi.setBudget(total); setPool(r); setMsg('预算已更新') } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
@@ -430,11 +578,31 @@ export function CommercialSettingsPage() {
     <div>
       <CommercialNav />
       <h2>设置与费用</h2>
-      <Section title="测试总预算（管理员）" note={MOCK_NOTE}>
+      <Section title="演示预算（管理员）" note={`${MOCK_NOTE}；该预算属于演示（mock）池，不构成真实付费授权，切换真实模式不继承`}>
         <input style={input} placeholder="USD 金额，如 50.00" value={total} onChange={e => setTotal(e.target.value)} />
-        <button style={btn} onClick={set}>保存预算</button>
-        {pool && <p>当前预算池：${pool.total_usd}{pool.paused ? '（已暂停：真实费用超预留）' : ''}</p>}
+        <button style={btn} onClick={set}>保存演示预算</button>
+        {pool && <p>当前预算池：${pool.total_usd}（scope={pool.scope}）{pool.paused ? ' · 已暂停（真实费用超预留）' : ''}</p>}
         {msg && <p>{msg}</p>}
+      </Section>
+      <Section title="安全配置（管理员）：密钥与模型 ID"
+        note="密钥仅写入加密存储、永不回传页面或日志；保存动作不发起付费调用；能力验证状态与真实联调分开">
+        {provider == null
+          ? <p style={{ color: '#888' }}>需要管理员权限查看。</p>
+          : <>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 8 }}>
+                <input style={{ ...input, width: 260 }} type="password" placeholder={provider.has_atlas_api_key ? 'Atlas API 密钥（已配置，输入以更换）' : 'Atlas API 密钥（未配置）'}
+                  value={apiKey} onChange={e => setApiKey(e.target.value)} />
+                <input style={{ ...input, width: 260 }} placeholder="Gemini 解析模型精确 ID" value={geminiId} onChange={e => setGeminiId(e.target.value)} />
+                <input style={{ ...input, width: 260 }} placeholder="H3 生成模型精确 ID" value={h3Id} onChange={e => setH3Id(e.target.value)} />
+                <button style={btn} onClick={saveProvider}>保存配置</button>
+              </div>
+              {providerMsg && <p style={{ color: '#2f6f4f' }}>{providerMsg}</p>}
+              <ul style={{ fontSize: 13, color: '#555', margin: '6px 0 0', paddingLeft: 18 }}>
+                <li>密钥：{provider.has_atlas_api_key ? '已配置（不显示）' : '未配置'}</li>
+                <li>已验证能力清单：{provider.commercial_verified_models || '（空——模型能力未经真实契约验证，付费执行保持阻断）'}</li>
+                <li>模式：{provider.commercial_mock_mode ? '开发模拟（mock）' : '真实'} · 付费执行总开关：{provider.commercial_paid_execution_enabled ? '开' : '关（默认）'}</li>
+              </ul>
+            </>}
       </Section>
       <Section title="模型能力状态">
         <ul style={{ fontSize: 13, color: '#555' }}>
