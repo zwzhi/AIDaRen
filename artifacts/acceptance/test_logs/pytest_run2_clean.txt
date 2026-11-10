@@ -1,0 +1,31 @@
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+tests/test_media_library.py::test_catalog_collects_fragment_archives_compositions_and_short_video_outputs
+  D:\AI Project\AIDaRen\backend\.venv\Lib\site-packages\sqlalchemy\sql\elements.py:5417: RuntimeWarning: coroutine 'Connection._cancel' was never awaited
+    return super().__new__(cls, value, quote)
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED tests/test_asset_media_metadata.py::test_upload_endpoint_replaces_metadata_and_archives_previous
+FAILED tests/test_asset_media_metadata.py::test_editing_next_generation_freezes_legacy_media_options
+FAILED tests/test_asset_media_metadata.py::test_media_replacement_cannot_keep_previous_model[True]
+FAILED tests/test_asset_media_metadata.py::test_media_replacement_cannot_keep_previous_model[False]
+FAILED tests/test_character_intro_toggle.py::test_prompt_forbids_intro_when_disabled
+FAILED tests/test_drama_subtitle_toggle.py::test_seedance_prompt_text_post_mode_strips_cues
+FAILED tests/test_drama_subtitle_toggle.py::test_build_seedance_generate_body_defaults_no_burn
+FAILED tests/test_generation_history.py::test_history_restores_actual_submission_without_other_attempts_or_helper_images
+FAILED tests/test_kepu_shot_edit_demote.py::test_narration_edit_invalidates_continuous_audio
+FAILED tests/test_marketplace_app_content.py::test_purchased_detail_and_list_share_live_social_without_changing_version[work]
+FAILED tests/test_marketplace_app_content.py::test_purchased_detail_and_list_share_live_social_without_changing_version[series_episode]
+FAILED tests/test_marketplace_app_media.py::test_standalone_market_worker_cannot_create_app_financial_tables[missing0]
+FAILED tests/test_marketplace_app_media.py::test_standalone_market_worker_cannot_create_app_financial_tables[missing1]
+FAILED tests/test_marketplace_runtime.py::test_app_media_runs_after_existing_jobs_under_same_market_lock
+FAILED tests/test_seedream_size_pro_cap.py::test_pro_character_default_ratio
+FAILED tests/test_team_schema_cli.py::test_schema_patches_use_requested_engine_without_replacing_global[False]
+FAILED tests/test_team_schema_cli.py::test_schema_patches_use_requested_engine_without_replacing_global[True]
+FAILED tests/test_unified_wallet_ai.py::test_signup_and_admin_grants_keep_zero_cash_sources
+18 failed, 2191 passed, 7 skipped, 8 warnings in 573.74s (0:09:33)
+PYTEST2-EXIT=1
