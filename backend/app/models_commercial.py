@@ -7,7 +7,9 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from decimal import Decimal
+
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, Numeric, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -215,3 +217,120 @@ class CvProductVersion(Base):
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class CvCostQuote(Base):
+    """报价快照（§10.2）：绑定完整参数指纹，参数变化即失效。"""
+
+    __tablename__ = "cv_cost_quotes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    quote_key: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    provider_id: Mapped[str] = mapped_column(String(32), default="atlas")
+    model_id: Mapped[str] = mapped_column(String(96))
+    capability_version: Mapped[str] = mapped_column(String(32), default="")
+    request_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    resolution_id: Mapped[str] = mapped_column(String(16), default="")
+    requested_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    currency: Mapped[str] = mapped_column(String(8), default="USD")
+    estimated_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    is_estimated: Mapped[bool] = mapped_column(Boolean, default=True)
+    price_source: Mapped[str] = mapped_column(String(64), default="")
+    provider_payload_redacted: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    fx_rate_label: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CvBudgetPool(Base):
+    """共享预算池（首版单池）：可用 = total - settled - reserved。"""
+
+    __tablename__ = "cv_budget_pools"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), default="default")
+    currency: Mapped[str] = mapped_column(String(8), default="USD")
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
+    reserved_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
+    settled_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @classmethod
+    async def ensure_default(cls, db, *, total: Decimal, created_by: int) -> "CvBudgetPool":
+        pool = (await db.execute(
+            __import__("sqlalchemy").select(cls).where(cls.name == "default")
+        )).scalar_one_or_none()
+        if pool is None:
+            pool = cls(name="default", total_amount=total, created_by=created_by)
+            db.add(pool)
+            await db.flush()
+        return pool
+
+
+class CvBudgetReservation(Base):
+    """一次批准的预算预留（并发安全：池行条件更新）。"""
+
+    __tablename__ = "cv_budget_reservations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    pool_id: Mapped[int] = mapped_column(ForeignKey("cv_budget_pools.id"), index=True)
+    # 原子预留路径可在报价落库前占额度（如管理员手工预留），允许空引用
+    quote_id: Mapped[int | None] = mapped_column(ForeignKey("cv_cost_quotes.id"), nullable=True, index=True)
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    currency: Mapped[str] = mapped_column(String(8), default="USD")
+    status: Mapped[str] = mapped_column(String(16), default="reserved")  # reserved|settled|released
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    released_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CvGenerationAttempt(Base):
+    """生成尝试：幂等键 + 参数哈希 + 状态机（§9.2 的持久层）。"""
+
+    __tablename__ = "cv_generation_attempts"
+    __table_args__ = (
+        UniqueConstraint("client_request_id", name="uq_cv_attempt_client_request"),
+        Index("ix_cv_attempt_unit", "generation_unit_id", "attempt_no"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    production_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    generation_unit_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    attempt_no: Mapped[int] = mapped_column(Integer, default=1)
+    client_request_id: Mapped[str] = mapped_column(String(128), index=True)
+    payload_hash: Mapped[str] = mapped_column(String(64))
+    quote_id: Mapped[int | None] = mapped_column(ForeignKey("cv_cost_quotes.id"), nullable=True)
+    reservation_id: Mapped[int | None] = mapped_column(ForeignKey("cv_budget_reservations.id"), nullable=True)
+    # §9.2 状态
+    status: Mapped[str] = mapped_column(String(32), default="APPROVED", index=True)
+    provider_prediction_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CvUsageLedger(Base):
+    """Atlas 原币账本（§10.4）：NUMERIC(20,8)，绝不用 float/fen。"""
+
+    __tablename__ = "cv_usage_ledger"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attempt_ref: Mapped[str] = mapped_column(String(64), index=True)
+    provider_id: Mapped[str] = mapped_column(String(32), default="atlas")
+    model_id: Mapped[str] = mapped_column(String(96), default="")
+    provider_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    currency: Mapped[str] = mapped_column(String(8), default="USD")
+    amount: Mapped[Decimal] = mapped_column(Numeric(20, 8))
+    amount_cny: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    settlement_status: Mapped[str] = mapped_column(String(24), default="SETTLEMENT_PENDING", index=True)
+    usage_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    reconciled_manually: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
