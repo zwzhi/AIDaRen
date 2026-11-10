@@ -116,7 +116,7 @@ async def _run_pipeline(
         "actor_version_id": actor_version_id,
         "voice_profile_id": voice_profile_id,
         "product_version_id": product_version_id,
-        "target_duration_ms": 15_000, "resolution_id": "720p",
+        "target_duration_ms": 15_000, "resolution_id": "768p",
         "dialogue_locked": False,
     })
     assert resp.status_code == 200, resp.text

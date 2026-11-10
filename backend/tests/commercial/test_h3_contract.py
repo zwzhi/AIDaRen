@@ -36,7 +36,7 @@ def _input(**overrides) -> VideoGenerationInput:
         actor_image_asset_ids=(101,), product_image_asset_ids=(201,),
         voice_reference_asset_ids=(301,),
         prompt="达人手持商品面向镜头讲解", approved_dialogue="这款精华质地清爽",
-        resolution_id="720p", duration_ms=6_000, aspect_ratio="9:16",
+        resolution_id="768p", duration_ms=6_000, aspect_ratio="9:16",
         audio_required=True,
     )
     params.update(overrides)
@@ -75,7 +75,7 @@ def test_request_body_has_no_source_reference() -> None:
     body = build_h3_request(_input(), DRAFT_H3_CAPABILITIES)
     serialized = str(body)
     assert "source_video" not in serialized and "source_frame" not in serialized
-    assert body["duration_ms"] == 6_000 and body["resolution"] == "720p"
+    assert body["duration_ms"] == 6_000 and body["resolution"] == "768p"
 
 
 # ---------------------------------------------------------------- 状态映射
@@ -133,7 +133,7 @@ def test_quote_decimal_precision() -> None:
     quote = asyncio.run(quote_generation(
         {"model": "x"}, base_url=BASE, api_key="k",
         request_fingerprint="fp-1", model_id="minimax-h3-developer-reference",
-        requested_duration_ms=6_000, resolution_id="720p",
+        requested_duration_ms=6_000, resolution_id="768p",
         transport=httpx.MockTransport(handler),
     ))
     from decimal import Decimal
@@ -148,6 +148,40 @@ def test_quote_error_not_success() -> None:
         asyncio.run(quote_generation(
             {"model": "x"}, base_url=BASE, api_key="k",
             request_fingerprint="fp-1", model_id="m",
-            requested_duration_ms=6_000, resolution_id="720p",
+            requested_duration_ms=6_000, resolution_id="768p",
             transport=httpx.MockTransport(handler),
         ))
+
+
+# ---------------------------------------------------------------- 官方 data 包装（2026-11-10 文档核实）
+def test_submit_parses_data_wrapped_id() -> None:
+    """官方文档：generateVideo 返回 {"data": {"id": ...}}。"""
+    def handler(request):
+        return httpx.Response(200, json={"data": {"id": "pred-data-1"}})
+    pid = asyncio.run(submit_generation({"model": "x"}, base_url=BASE, api_key="k",
+                                        transport=httpx.MockTransport(handler)))
+    assert pid == "pred-data-1"
+
+
+def test_poll_maps_data_wrapped_processing_and_completed() -> None:
+    """官方文档：状态 processing/completed，输出在 data.outputs。"""
+    running = map_prediction({"data": {"id": "p1", "status": "processing"}})
+    assert running.status == "running"
+    done = map_prediction({"data": {"id": "p1", "status": "completed",
+                                    "outputs": ["https://cdn.example.test/v.mp4"]}})
+    assert done.status == "succeeded" and done.output_urls[0].startswith("https://")
+
+
+def test_poll_maps_data_wrapped_failed() -> None:
+    failed = map_prediction({"data": {"id": "p1", "status": "failed",
+                                      "error": "balance insufficient"}})
+    assert failed.status == "failed" and "balance" in failed.error
+
+
+def test_developer_capabilities_from_official_page() -> None:
+    """能力档案对齐官方页：5-15s；480P/768P/2K（无 1080p）；9:16/16:9/1:1。"""
+    caps = DRAFT_H3_CAPABILITIES
+    assert caps.duration_min_ms == 5_000 and caps.duration_max_ms == 15_000
+    assert set(caps.resolutions) == {"480p", "768p", "2k"}
+    assert set(caps.aspect_ratios) == {"9:16", "16:9", "1:1"}
+    assert caps.capability_verified is False  # 公开对齐≠真实验证

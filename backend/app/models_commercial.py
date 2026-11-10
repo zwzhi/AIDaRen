@@ -389,7 +389,7 @@ class CvProduction(Base):
     marketing_goal: Mapped[str] = mapped_column(String(255), default="")
     locked_dialogue: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     target_duration_ms: Mapped[int] = mapped_column(Integer, default=30_000)
-    resolution_id: Mapped[str] = mapped_column(String(16), default="720p")
+    resolution_id: Mapped[str] = mapped_column(String(16), default="768p")
     aspect_ratio: Mapped[str] = mapped_column(String(8), default="9:16")
     status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
     # 制作计划快照：adapted shots + generation units + adoption ranges

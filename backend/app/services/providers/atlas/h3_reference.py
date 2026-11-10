@@ -38,12 +38,15 @@ class H3Capabilities:
     capability_version: str = "draft-2026-11-10"
 
 
-# 草案能力：以任务书示例（最小 5s、G06 场景）初始化，待 T03 真实联调核实替换
+# 能力档案（依据 2026-11-10 Atlas 官方模型页公开信息更新；capability_verified 仍为 False
+# 直到账号内真实契约验证通过）：
+# - H3 Developer 三路线（T2V/I2V/Reference）均含生成音频；480P/768P/2K；16:9/9:16/1:1
+# - 时长 5–15 秒；标准价 $0.05/s（官方页明示，非历史清单的 $0.015/s）
 DRAFT_H3_CAPABILITIES = H3Capabilities(
     duration_min_ms=5_000,
-    duration_max_ms=10_000,
+    duration_max_ms=15_000,
     duration_step_ms=1_000,
-    resolutions=frozenset({"480p", "720p", "1080p"}),
+    resolutions=frozenset({"480p", "768p", "2k"}),
     aspect_ratios=frozenset({"9:16", "16:9", "1:1"}),
     audio_supported=True,
     voice_reference_supported=True,
@@ -135,7 +138,13 @@ class ProviderTaskResult:
 
 
 def map_prediction(payload: dict[str, Any]) -> ProviderTaskResult:
-    """把 Atlas prediction 响应映射为内部状态；错误体绝不判成功。"""
+    """把 Atlas prediction 响应映射为内部状态；错误体绝不判成功。
+
+    兼容两种包装：官方文档为 {"data": {...}} 包装（2026-11-10 核实），
+    同时保留顶层字段解析以适配控制台示例中的简写形态。
+    """
+    if isinstance(payload.get("data"), dict) and payload["data"]:
+        payload = dict(payload["data"])
     if isinstance(payload.get("error"), (dict, str)):
         message = payload["error"]
         if isinstance(message, dict):
@@ -148,7 +157,7 @@ def map_prediction(payload: dict[str, Any]) -> ProviderTaskResult:
         )
     raw_status = str(payload.get("status") or "").strip().lower()
     if raw_status in {"succeeded", "success", "completed"}:
-        outputs = payload.get("output") or payload.get("outputs") or []
+        outputs = payload.get("outputs") or payload.get("output") or []
         if isinstance(outputs, str):
             outputs = [outputs]
         urls = tuple(str(u) for u in outputs if str(u).startswith("https://"))
@@ -185,7 +194,10 @@ async def submit_generation(
         if resp.status_code >= 400:
             raise ProviderRequestError(resp.status_code, resp.text[:500])
         payload = resp.json()
-        prediction_id = str(payload.get("id") or payload.get("prediction_id") or "").strip()
+        body = resp.json()
+        if isinstance(body.get("data"), dict) and body["data"]:
+            body = body["data"]  # 官方文档 data 包装（2026-11-10 核实）
+        prediction_id = str(body.get("id") or body.get("prediction_id") or "").strip()
         if not prediction_id:
             raise ProviderRequestError(resp.status_code, "上游未返回任务 ID（SUBMIT_RESULT_UNKNOWN 需人工对账）")
         return prediction_id

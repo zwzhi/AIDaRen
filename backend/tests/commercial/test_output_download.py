@@ -18,7 +18,7 @@ _PARAMS = {
     "actor_image_asset_ids": [101], "product_image_asset_ids": [201],
     "voice_reference_asset_ids": [301], "prompt": "达人手持商品面向镜头讲解",
     "approved_dialogue": "这款精华质地清爽",
-    "resolution_id": "720p", "duration_ms": 6000, "aspect_ratio": "9:16",
+    "resolution_id": "768p", "duration_ms": 6000, "aspect_ratio": "9:16",
     "audio_required": True, "params_version": 1,
 }
 

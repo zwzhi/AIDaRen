@@ -20,7 +20,7 @@ def _caps(min_ms: int = 5_000, max_ms: int = 10_000, step_ms: int = 1_000):
 
     return H3Capabilities(
         duration_min_ms=min_ms, duration_max_ms=max_ms, duration_step_ms=step_ms,
-        resolutions=frozenset({"720p"}), aspect_ratios=frozenset({"9:16"}),
+        resolutions=frozenset({"768p"}), aspect_ratios=frozenset({"9:16"}),
         audio_supported=True, voice_reference_supported=True,
     )
 

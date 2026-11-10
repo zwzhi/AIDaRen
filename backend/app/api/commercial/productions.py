@@ -283,7 +283,7 @@ class ProductionCreateBody(BaseModel):
     voice_profile_id: int
     product_version_id: int
     target_duration_ms: int = 30_000
-    resolution_id: str = "720p"
+    resolution_id: str = "768p"
     aspect_ratio: str = "9:16"
     marketing_goal: str = ""
     allow_cross_actor_voice: bool = False
