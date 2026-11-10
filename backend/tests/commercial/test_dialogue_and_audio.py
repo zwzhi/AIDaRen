@@ -129,14 +129,14 @@ async def _seed_single_unit_production(db: AsyncSession, admin) -> int:
 
 
 async def _quote_generate(client, pid: int, req_id: str, dialogue: str = "",
-                          quote_id: int | None = None):
+                          quote_id: int | None = None, unit_key: str = "U001"):
     if quote_id is None:
         q = await client.post(f"/api/commercial/productions/{pid}/quote", json={
-            "unit_key": "U001", "dialogue_override": dialogue})
+            "unit_key": unit_key, "dialogue_override": dialogue})
         assert q.status_code == 200, q.text
         quote_id = q.json()["quote_id"]
     g = await client.post(f"/api/commercial/productions/{pid}/generate", json={
-        "unit_key": "U001", "quote_id": quote_id, "client_request_id": req_id,
+        "unit_key": unit_key, "quote_id": quote_id, "client_request_id": req_id,
         "drive": True, "dialogue_override": dialogue})
     return g
 
@@ -298,3 +298,87 @@ async def test_adopt_range_beyond_media_rejected(client, db_session, admin):
         "subtitles": False, "complete": True})
     assert resp.status_code == 422
     assert "超出" in resp.json()["detail"] or "时长" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_multi_selection_subtitles_cover_every_selection(client, db_session, admin):
+    """多 selection 合成：每个 selection 各生成一段字幕（时间轴全局累加）。
+
+    回归背景：字幕块曾被移出 selection 循环，导致只输出最后一段字幕。
+    """
+    from app.models_commercial import (
+        CvActor, CvActorVersion, CvBudgetPool, CvMediaAsset, CvProduct,
+        CvProductVersion, CvProduction, CvTemplate, CvTemplateVersion, CvVoiceProfile,
+    )
+    from app.services.commercial.storage import asset_disk_path
+
+    await CvBudgetPool.ensure_default(db_session, total=Decimal("50"), created_by=admin.id)
+    image = CvMediaAsset(kind="image", object_key="da2/i.png", sha256="3" * 64,
+                         mime="image/png", size_bytes=4, source_role="owned_actor_image",
+                         uploaded_by=admin.id)
+    voice = CvMediaAsset(kind="audio", object_key="da2/v.mp3", sha256="4" * 64,
+                         mime="audio/mpeg", size_bytes=4, source_role="owned_voice_reference",
+                         uploaded_by=admin.id)
+    db_session.add_all([image, voice])
+    await db_session.flush()
+    for asset in (image, voice):
+        path = asset_disk_path(asset.object_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"DA2-BYTES")
+    tpl = CvTemplate(name="da2-t", created_by=admin.id)
+    db_session.add(tpl)
+    await db_session.flush()
+    tv = CvTemplateVersion(template_id=tpl.id, version=1, published_by=admin.id)
+    db_session.add(tv)
+    actor = CvActor(name="da2-a", created_by=admin.id)
+    db_session.add(actor)
+    await db_session.flush()
+    av = CvActorVersion(actor_id=actor.id, version=1, image_asset_ids=[image.id],
+                        published_by=admin.id)
+    db_session.add(av)
+    vp = CvVoiceProfile(actor_id=actor.id, audio_asset_id=voice.id)
+    db_session.add(vp)
+    product = CvProduct(name="da2-p", created_by=admin.id)
+    db_session.add(product)
+    await db_session.flush()
+    pv = CvProductVersion(product_id=product.id, version=1, image_asset_ids=[image.id],
+                          published_by=admin.id)
+    db_session.add(pv)
+    await db_session.flush()
+    production = CvProduction(
+        template_version_id=tv.id, actor_version_id=av.id, voice_profile_id=vp.id,
+        product_version_id=pv.id, status="planned", created_by=admin.id,
+        plan_json={
+            "shots": [{"shot_key": "S01", "dialogue": "第一镜台词", "target_duration_ms": 5000},
+                      {"shot_key": "S02", "dialogue": "第二镜台词", "target_duration_ms": 5000}],
+            "units": [
+                {"unit_key": "U001", "request_duration_ms": 5000, "covered_shot_keys": ["S01"],
+                 "adopt_ranges": [["S01", 0, 5000]], "params_version": 1, "notes": []},
+                {"unit_key": "U002", "request_duration_ms": 5000, "covered_shot_keys": ["S02"],
+                 "adopt_ranges": [["S02", 0, 5000]], "params_version": 1, "notes": []}],
+        })
+    db_session.add(production)
+    await db_session.commit()
+    pid = production.id
+
+    attempt_ids = []
+    for key, dialogue in (("U001", "第一镜台词"), ("U002", "第二镜台词")):
+        g = await _quote_generate(client, pid, f"mss-{key}", dialogue=dialogue, unit_key=key)
+        assert g.status_code == 202, g.text
+        attempt_ids.append(g.json()["attempt_id"])
+        r = await client.post(f"/api/commercial/attempts/{attempt_ids[-1]}/review", json={
+            "dimensions": {"人物身份": "PASS", "商品准确": "PASS", "音色": "PASS", "台词": "PASS",
+                            "口型": "PASS", "动作与画面": "PASS", "模板表达": "PASS", "技术输出": "PASS"},
+            "speech_required": True})
+        assert r.status_code == 200
+
+    resp = await client.post(f"/api/commercial/productions/{pid}/compose", json={
+        "selections": [{"attempt_id": attempt_ids[0], "ranges": [[0, 5000]]},
+                        {"attempt_id": attempt_ids[1], "ranges": [[0, 5000]]}],
+        "subtitles": True, "complete": True})
+    assert resp.status_code == 200, resp.text
+    srt = (await client.get(
+        f"/api/commercial/exports/{resp.json()['export_id']}")).json()["srt_content"]
+    assert "第一镜台词" in srt and "第二镜台词" in srt, srt
+    assert srt.count("00:00:") >= 2, f"应有两段字幕条目: {srt}"
+    assert "00:00:05" in srt, "第二段时间码应从全局 5s 起"

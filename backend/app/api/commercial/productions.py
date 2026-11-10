@@ -301,10 +301,20 @@ async def create_product(
 async def list_products(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    from app.models_commercial import CvProduct
+    from app.models_commercial import CvProduct, CvProductVersion
 
     products = (await db.execute(select(CvProduct).order_by(CvProduct.id.desc()))).scalars().all()
-    return {"items": [{"id": p.id, "name": p.name, "current_version": p.current_version} for p in products]}
+    out = []
+    for p in products:
+        latest = (await db.execute(
+            select(CvProductVersion.id).where(CvProductVersion.product_id == p.id)
+            .order_by(CvProductVersion.version.desc()).limit(1)
+        )).scalar_one_or_none()
+        # latest_version_id 是创建作品要引用的版本行 ID；
+        # current_version 仅是版本号（多个商品会重复，不能当作 ID 使用）
+        out.append({"id": p.id, "name": p.name, "current_version": p.current_version,
+                    "latest_version_id": latest})
+    return {"items": out}
 
 
 # ---------------------------------------------------------------- 作品与制作
@@ -792,6 +802,18 @@ async def compose(
             raise HTTPException(status_code=422, detail=problem)
         ranges = [(attempt.output_asset_key or "", int(s), int(e)) for s, e in selection.ranges]
         pairs.append((attempt, ranges))
+        # 字幕草稿文本：来自本次选中 attempt 的定稿台词快照（重做后即新台词），
+        # 不使用原片旧台词/时间码；多采用区间按分隔符对齐，无法对齐时首段承载整段。
+        # 必须逐 selection 构建（每段各自的时间轴累加），不得在循环外合并。
+        dialogue_full = str((attempt.params_json or {}).get("approved_dialogue") or "")
+        pieces = dialogue_full.split("；") if dialogue_full else []
+        for idx, (s, e) in enumerate(selection.ranges):
+            text = pieces[idx] if idx < len(pieces) else (dialogue_full if idx == 0 else "")
+            # 字幕时间码对齐成片全局时间轴（拼接后的绝对区间），非单元内相对区间
+            span = max(0, int(e) - int(s))
+            shots_meta.append({"shot_key": f"attempt{attempt.id}", "dialogue": text.strip(),
+                               "adopt": (timeline_cursor, timeline_cursor + span)})
+            timeline_cursor += span
     # 完整成片：必需单元缺「明确选中」的合格版本 → 服务端阻断（严格逐单元，
     # 不按数量回退；多次重做的合格版本只覆盖自身单元，不得顶替其他镜头）
     if body.complete:
@@ -803,17 +825,6 @@ async def compose(
                 detail=f"以下必需生成单元没有审核合格的版本，不能导出完整成片：{missing}。"
                        "请先重做并审核通过，或选择部分预览导出（将明确标记为部分预览）。",
             )
-        # 字幕草稿文本：来自本次选中 attempt 的定稿台词快照（重做后即新台词），
-        # 不使用原片旧台词/时间码；多采用区间按分隔符对齐，无法对齐时首段承载整段
-        dialogue_full = str((attempt.params_json or {}).get("approved_dialogue") or "")
-        pieces = dialogue_full.split("；") if dialogue_full else []
-        for idx, (s, e) in enumerate(selection.ranges):
-            text = pieces[idx] if idx < len(pieces) else (dialogue_full if idx == 0 else "")
-            # 字幕时间码对齐成片全局时间轴（拼接后的绝对区间），非单元内相对区间
-            span = max(0, int(e) - int(s))
-            shots_meta.append({"shot_key": f"attempt{attempt.id}", "dialogue": text.strip(),
-                               "adopt": (timeline_cursor, timeline_cursor + span)})
-            timeline_cursor += span
     try:
         result = await compose_production(db, selections=pairs)
     except Exception as exc:  # noqa: BLE001

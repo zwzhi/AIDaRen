@@ -25,7 +25,7 @@ export type ActorItem = {
   versions: { id: number; version: number; image_asset_ids: number[] }[]
   voices: { id: number; audio_asset_id: number; authorized_until: string | null; status: string }[]
 }
-export type ProductItem = { id: number; name: string; current_version: number }
+export type ProductItem = { id: number; name: string; current_version: number; latest_version_id?: number | null }
 export type Unit = {
   unit_key: string; request_duration_ms: number
   covered_shot_keys: string[]; adopt_ranges: [string, number, number][]; notes?: string[]

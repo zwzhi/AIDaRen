@@ -379,7 +379,7 @@ export function CommercialStudioPage() {
           </select>
           <select style={input} onChange={e => setSel(s => ({ ...s, productVersion: +e.target.value }))} defaultValue="">
             <option value="" disabled>选择商品</option>
-            {products.map(p => <option key={p.id} value={p.current_version}>{p.name}（最新版）</option>)}
+            {products.map(p => <option key={p.id} value={p.latest_version_id ?? p.current_version}>{p.name}（最新版）</option>)}
           </select>
           <select style={input} value={resolution} onChange={e => setResolution(e.target.value)}
             disabled={!caps || caps.resolutions.length === 0} aria-label="生成分辨率">
