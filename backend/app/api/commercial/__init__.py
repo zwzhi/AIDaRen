@@ -1,0 +1,9 @@
+"""商业模板业务域 API。"""
+from __future__ import annotations
+
+from fastapi import APIRouter
+
+from app.api.commercial import sources
+
+router = APIRouter(tags=["商业短视频模板"])
+router.include_router(sources.router)

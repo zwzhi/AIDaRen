@@ -102,6 +102,10 @@ class Settings(BaseSettings):
     atlas_api_key: str = ""
     gemini_analysis_model_id: str = ""
     h3_developer_reference_model_id: str = ""
+    # 私有素材存储根（相对 backend 目录或绝对路径）；绝不放入 /static 公开目录
+    commercial_storage_root: str = "data/commercial"
+    commercial_max_reference_duration_seconds: int = 180
+    commercial_max_source_file_mb: int = 500
     # 本地连接共享测试库时关闭，避免本机和服务器同时消费、恢复同一队列。
     task_runtime_enabled: bool = True
     # 未单独配置队列时，每个队列使用的并发上限。
