@@ -65,19 +65,51 @@ async def request_quote(
     db: AsyncSession, *, params: dict[str, Any], api_key: str, base_url: str,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> CvCostQuote:
-    """按当前参数取得报价并存快照（不创建生成任务、不二次打折）。"""
-    from app.services.providers.atlas.pricing import quote_generation
+    """按已确认计划参数取得报价并存快照。
+
+    请求体与生成共用同一构造器（generation_request.build_request_body），
+    确保报价与提交的能力/费用条件完全一致；Mock 模式返回明确标记的
+    模拟价（历史展示价 $0.015/s），不代表真实报价。
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.schemas_commercial import CostQuote as QuoteObj
+    from app.services.commercial import mock_provider
+    from app.services.commercial.generation_request import build_request_body
+    from app.services.providers.atlas.h3_reference import DRAFT_H3_CAPABILITIES
 
     fingerprint = compute_request_fingerprint(params)
-    quote = await quote_generation(
-        {"model": params.get("model_id"), "prompt": params.get("approved_dialogue", "")},
-        base_url=base_url, api_key=api_key,
-        request_fingerprint=fingerprint,
-        model_id=str(params.get("model_id") or ""),
-        requested_duration_ms=int(params.get("duration_ms") or 0),
-        resolution_id=str(params.get("resolution_id") or ""),
-        transport=transport,
-    )
+    body = build_request_body(params, DRAFT_H3_CAPABILITIES)  # 能力校验在此前置
+
+    if mock_provider.mock_enabled():
+        now = datetime.now(UTC)
+        quote = QuoteObj(
+            quote_id=f"MOCK-q-{now.strftime('%H%M%S')}-{fingerprint[:8]}",
+            provider_id="atlas",
+            model_id=str(params.get("model_id") or ""),
+            request_fingerprint=fingerprint,
+            requested_duration_ms=int(params.get("duration_ms") or 0),
+            resolution_id=str(params.get("resolution_id") or ""),
+            currency="USD",
+            estimated_amount=mock_provider.mock_quote_amount(body),
+            is_estimated=True,
+            price_source="mock:$0.015/s（历史展示价·仅开发模拟，非真实报价）",
+            created_at=now,
+            expires_at=now + timedelta(seconds=600),
+            provider_payload_redacted={"mock": True},
+        )
+    else:
+        from app.services.providers.atlas.pricing import quote_generation
+
+        quote = await quote_generation(
+            body,
+            base_url=base_url, api_key=api_key,
+            request_fingerprint=fingerprint,
+            model_id=str(params.get("model_id") or ""),
+            requested_duration_ms=int(params.get("duration_ms") or 0),
+            resolution_id=str(params.get("resolution_id") or ""),
+            transport=transport,
+        )
     row = CvCostQuote(
         quote_key=quote.quote_id,
         provider_id="atlas",
@@ -201,6 +233,7 @@ async def approve_and_reserve(
     attempt = CvGenerationAttempt(
         production_id=production_id, generation_unit_id=generation_unit_id,
         attempt_no=1, client_request_id=client_request_id, payload_hash=payload_hash,
+        params_json=dict(params),  # 计划参数快照：报价与生成同源
         quote_id=quote.id, reservation_id=reservation.id,
         status="APPROVED", created_by=created_by,
     )

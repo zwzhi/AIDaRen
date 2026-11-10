@@ -10,6 +10,54 @@ import pytest_asyncio
 
 from app.models_commercial import CvBudgetPool, CvCostQuote, CvGenerationAttempt
 from app.services.commercial import generation as gen
+import pytest
+
+# T07 单元层用真实适配器路径（关闭 Mock），并携带完整计划参数快照
+_PARAMS = {
+    "model_id": "minimax-h3-developer-reference",
+    "actor_image_asset_ids": [101], "product_image_asset_ids": [201],
+    "voice_reference_asset_ids": [301], "prompt": "达人手持商品面向镜头讲解",
+    "approved_dialogue": "这款精华质地清爽",
+    "resolution_id": "720p", "duration_ms": 6000, "aspect_ratio": "9:16",
+    "audio_required": True, "params_version": 1,
+}
+
+
+@pytest.fixture(autouse=True)
+def _real_provider_mode(monkeypatch):
+    monkeypatch.setattr("app.services.commercial.mock_provider.mock_enabled", lambda: False)
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _generation_assets(db_session, owner):
+    """提交路径素材交付需要真实 owned_* 资产与文件。"""
+    import secrets
+
+    from app.models_commercial import CvMediaAsset
+    from app.services.commercial.storage import asset_disk_path
+
+    def _mk(role: str, mime: str, kind: str) -> CvMediaAsset:
+        key = f"{role}/t/{secrets.token_hex(6)}.bin"
+        asset = CvMediaAsset(
+            kind=kind, object_key=key, sha256="f" * 64,
+            mime=mime, size_bytes=16, source_role=role, uploaded_by=owner.id,
+        )
+        db_session.add(asset)
+        return asset
+
+    actor = _mk("owned_actor_image", "image/png", "image")
+    product = _mk("owned_product_image", "image/png", "image")
+    voice = _mk("owned_voice_reference", "audio/mpeg", "audio")
+    await db_session.flush()
+    for asset in (actor, product, voice):
+        path = asset_disk_path(asset.object_key)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"TESTBYTES-0123456789")
+    _PARAMS["actor_image_asset_ids"] = [actor.id]
+    _PARAMS["product_image_asset_ids"] = [product.id]
+    _PARAMS["voice_reference_asset_ids"] = [voice.id]
+    yield
+
 from tests.conftest import make_user
 
 
@@ -29,6 +77,7 @@ async def _attempt(db, owner, *, prediction: str) -> CvGenerationAttempt:
     attempt = CvGenerationAttempt(
         client_request_id=f"cr-{quote.id}", payload_hash="fp", quote_id=quote.id,
         status="PROVIDER_RUNNING", provider_prediction_id=prediction, created_by=owner.id,
+        params_json=dict(_PARAMS),
     )
     db.add(attempt)
     await db.flush()

@@ -88,3 +88,50 @@ async def fetch_url_to_file(
             dest.write_bytes(resp.content)
             return dest
     raise SsrfBlockedError("重定向次数超限")
+
+
+# ---------------------------------------------------------------- 素材上传（§8.6）
+
+class UploadFailedError(Exception):
+    """服务商素材上传失败。"""
+
+
+async def upload_media(
+    raw: bytes, mime: str, *, base_url: str, api_key: str,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> dict[str, Any]:
+    """上传素材到 Atlas（DRAFT 契约：/api/v1/model/uploadMedia）。
+
+    返回 {"handle", "url", "expires_at"(可选)}；错误状态/错误体一律失败，
+    绝不把本机路径或内部地址当作外部可读素材地址。
+    """
+    url = f"{base_url}/api/v1/model/uploadMedia"
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(120.0, connect=15.0), transport=transport,
+        headers={"Authorization": f"Bearer {api_key}"},
+    ) as client:
+        files = {"file": (f"asset.{mime.split('/')[-1]}", raw, mime)}
+        resp = await client.post(url, files=files)
+        if resp.status_code >= 400:
+            raise UploadFailedError(f"HTTP {resp.status_code}: {resp.text[:300]}")
+        payload = resp.json()
+        handle = str(payload.get("id") or payload.get("handle") or "").strip()
+        if not handle:
+            raise UploadFailedError("上传响应缺少素材句柄（uploadMedia 契约待联调核实）")
+        return {
+            "handle": handle,
+            "url": str(payload.get("url") or ""),
+            "expires_at": payload.get("expires_at"),
+        }
+
+
+def handle_expired(handle_row, now=None) -> bool:
+    """句柄是否过期（无 expires_at 视为长期有效，待联调核实保留期）。"""
+    from datetime import UTC, datetime as _dt
+
+    expires = handle_row.expires_at
+    if expires is None:
+        return False
+    if expires.tzinfo is None:
+        expires = expires.replace(tzinfo=UTC)
+    return expires <= (now or _dt.now(UTC))

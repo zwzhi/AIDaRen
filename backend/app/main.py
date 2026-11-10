@@ -440,6 +440,8 @@ async def _apply_schema_patches(engine_override: AsyncEngine | None = None) -> N
         cgac = await _pg_columns(conn, "cv_generation_attempts")
         if cgac and "output_asset_key" not in cgac:
             await conn.execute(text("ALTER TABLE cv_generation_attempts ADD COLUMN output_asset_key VARCHAR(128)"))
+        if cgac and "params_json" not in cgac:
+            await conn.execute(text("ALTER TABLE cv_generation_attempts ADD COLUMN params_json JSON"))
 
 
 async def bootstrap_admins() -> None:

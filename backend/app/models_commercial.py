@@ -302,6 +302,8 @@ class CvGenerationAttempt(Base):
     attempt_no: Mapped[int] = mapped_column(Integer, default=1)
     client_request_id: Mapped[str] = mapped_column(String(128), index=True)
     payload_hash: Mapped[str] = mapped_column(String(64))
+    # 已确认制作计划参数快照（报价与生成同源；fingerprint 即其哈希）
+    params_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     quote_id: Mapped[int | None] = mapped_column(ForeignKey("cv_cost_quotes.id"), nullable=True)
     reservation_id: Mapped[int | None] = mapped_column(ForeignKey("cv_budget_reservations.id"), nullable=True)
     # §9.2 状态
@@ -348,4 +350,23 @@ class CvReview(Base):
     verdict: Mapped[str] = mapped_column(String(16))  # PASS|FAIL|NEEDS_REVIEW|NOT_APPLICABLE
     reason: Mapped[str] = mapped_column(Text, default="")
     reviewer_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvProviderMediaHandle(Base):
+    """服务商侧素材句柄：内部资产 → 上传句柄/有效期/来源（§8.6）。
+
+    短期上游 URL 绝不当永久资产；过期后由刷新逻辑重新上传。
+    """
+
+    __tablename__ = "cv_provider_media_handles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    asset_id: Mapped[int] = mapped_column(ForeignKey("cv_media_assets.id"), index=True)
+    provider: Mapped[str] = mapped_column(String(32), default="atlas")
+    purpose: Mapped[str] = mapped_column(String(32), default="generation")  # 生成用途
+    handle: Mapped[str] = mapped_column(String(255))
+    upstream_url: Mapped[str] = mapped_column(String(1024), default="")
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    source_sha256: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

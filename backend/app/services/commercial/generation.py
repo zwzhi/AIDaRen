@@ -59,14 +59,64 @@ async def execute_generation_task(
         await db.commit()
         return {"awaiting_poll": True}
 
-    # 首次提交
+    # 首次提交：从已确认计划参数快照构造完整请求（与报价同源）
     attempt.status = "SUBMITTING"
     await db.commit()
+    from app.services.commercial import mock_provider
+    from app.services.commercial.generation_request import (
+        RequestBuildError,
+        build_request_body,
+    )
+    from app.services.providers.atlas.h3_reference import DRAFT_H3_CAPABILITIES
+
+    if not attempt.params_json:
+        attempt.status = "PROVIDER_FAILED"
+        attempt.error_code = "PLAN_SNAPSHOT_MISSING"
+        attempt.error_message = "attempt 缺少计划参数快照，拒绝提交"
+        await db.commit()
+        return {"failed": True, "error": attempt.error_message}
     try:
-        prediction_id = await submit_generation(
-            {"model": "pending-real-contract", "prompt": ""},
-            base_url=base_url, api_key=api_key, transport=transport,
+        body = build_request_body(dict(attempt.params_json), DRAFT_H3_CAPABILITIES)
+    except RequestBuildError as exc:
+        attempt.status = "PROVIDER_FAILED"
+        attempt.error_code = exc.code
+        attempt.error_message = exc.message
+        await db.commit()
+        return {"failed": True, "error": exc.message}
+
+    # 素材句柄：内部资产 ID → 上游句柄（含归属/授权/血缘校验；Mock 模式零网络）
+    try:
+        from app.services.commercial.media_delivery import ensure_generation_handles
+
+        asset_ids: list[int] = sorted({
+            *[int(i) for i in attempt.params_json.get("actor_image_asset_ids") or []],
+            *[int(i) for i in attempt.params_json.get("product_image_asset_ids") or []],
+            *[int(i) for i in attempt.params_json.get("scene_image_asset_ids") or []],
+            *[int(i) for i in attempt.params_json.get("voice_reference_asset_ids") or []],
+        })
+        handles = await ensure_generation_handles(
+            db, asset_ids, base_url=base_url, api_key=api_key, transport=transport,
+            mock=mock_provider.mock_enabled(),
         )
+        body = dict(body)
+        for key in ("subject_image_asset_ids", "product_image_asset_ids",
+                    "scene_image_asset_ids", "voice_reference_asset_ids"):
+            if key in body and isinstance(body[key], list):
+                body[key] = [handles.get(int(i), i) for i in body[key]]
+    except Exception as exc:  # noqa: BLE001
+        attempt.status = "PROVIDER_FAILED"
+        attempt.error_code = "ASSET_DELIVERY_FAILED"
+        attempt.error_message = f"素材交付失败：{exc}"[:500]
+        await db.commit()
+        return {"failed": True, "error": attempt.error_message}
+
+    try:
+        if mock_provider.mock_enabled():
+            prediction_id = await mock_provider.mock_submit(body)
+        else:
+            prediction_id = await submit_generation(
+                body, base_url=base_url, api_key=api_key, transport=transport,
+            )
     except (httpx.TimeoutException, httpx.TransportError) as exc:
         # 请求可能已送达：结果不明，绝不自动重发
         attempt.status = "SUBMIT_UNKNOWN"
@@ -113,6 +163,17 @@ async def poll_attempt(
         attempt.error_code = "missing_provider_task_id"
         await db.commit()
         return {"failed": True}
+
+    # Mock 预测：本机测试片段直接归档（零网络），行为与真实轮询一致
+    from app.services.commercial import mock_provider
+
+    if prediction_id.startswith("MOCK-"):
+        clip = mock_provider.mock_clip_path(prediction_id)
+        attempt.output_asset_key = clip.name
+        attempt.status = "GENERATED"
+        await _record_pending_usage(db, attempt)
+        await db.commit()
+        return {"generated": True, "output_key": attempt.output_asset_key, "mock": True}
 
     # 上一轮已生成只差下载：只做下载
     if attempt.status == "OUTPUT_PENDING_DOWNLOAD":
