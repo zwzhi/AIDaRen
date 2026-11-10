@@ -85,7 +85,8 @@ async def request_quote(
     if mock_provider.mock_enabled():
         now = datetime.now(UTC)
         quote = QuoteObj(
-            quote_id=f"MOCK-q-{now.strftime('%H%M%S')}-{fingerprint[:8]}",
+            # 含微秒：同一秒内相同参数指纹的多次报价也不得撞唯一键
+            quote_id=f"MOCK-q-{now.strftime('%H%M%S%f')}-{fingerprint[:8]}",
             provider_id="atlas",
             model_id=str(params.get("model_id") or ""),
             request_fingerprint=fingerprint,

@@ -66,10 +66,14 @@ def mock_clip_path(prediction_id: str, duration_ms: int | None = None) -> Path:
     path = root / f"{prediction_id}.mp4"
     if not path.is_file() or duration_ms:
         seconds = max(1, round((duration_ms or 5_000) / 1000))
+        # 带音轨（P1-7）：合成链路必须能携带/校验声音；无声 Mock 素材会掩盖
+        # 裁剪丢音轨一类缺陷。testsrc=画面 + sine=正弦音轨。
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
-             "-i", f"testsrc=duration={seconds}:size=320x180:rate=12",
-             "-pix_fmt", "yuv420p", str(path)],
+            ["ffmpeg", "-y", "-loglevel", "error",
+             "-f", "lavfi", "-i", f"testsrc=duration={seconds}:size=320x180:rate=12",
+             "-f", "lavfi", "-i", f"sine=frequency=440:duration={seconds}",
+             "-map", "0:v", "-map", "1:a",
+             "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", str(path)],
             check=True, capture_output=True,
         )
     return path

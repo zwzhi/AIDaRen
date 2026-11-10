@@ -413,19 +413,25 @@ async def plan_production(
             "capabilities": plan["capabilities"]}
 
 
-def _build_unit_params(production: CvProduction, unit: dict[str, Any], user_id: int) -> dict:
-    """从已确认计划构造该单元的完整生成参数（报价与生成同源）。"""
+def _build_unit_params(production: CvProduction, unit: dict[str, Any], user_id: int,
+                       dialogue_override: str = "") -> dict:
+    """从已确认计划构造该单元的完整生成参数（报价与生成同源）。
+
+    dialogue_override（P1-8）：单镜重做时用户修改后的台词——进入参数快照
+    与报价指纹；与原计划台词不同 → 旧报价/旧批准自动失效（QUOTE_CHANGED）。
+    """
     actor_version = None  # 延迟加载在调用处
+    planned_dialogue = "；".join(
+        str(s.get("dialogue") or "") for s in (production.plan_json or {}).get("shots", [])
+        if s.get("shot_key") in (unit.get("covered_shot_keys") or [])
+    )
     return {
         "model_id": (get_settings().h3_developer_reference_model_id or "").strip(),
         "actor_image_asset_ids": [],  # 由 production 的达人版本填充（见下）
         "product_image_asset_ids": [],
         "voice_reference_asset_ids": [],
         "prompt": "按模板镜头描述生成：" + "；".join(unit.get("covered_shot_keys") or []),
-        "approved_dialogue": "；".join(
-            str(s.get("dialogue") or "") for s in (production.plan_json or {}).get("shots", [])
-            if s.get("shot_key") in (unit.get("covered_shot_keys") or [])
-        ),
+        "approved_dialogue": (dialogue_override or "").strip() or planned_dialogue,
         "resolution_id": production.resolution_id,
         "duration_ms": int(unit.get("request_duration_ms") or 0),
         "aspect_ratio": production.aspect_ratio,
@@ -451,6 +457,8 @@ async def _enrich_unit_params(db: AsyncSession, production: CvProduction, params
 
 class QuoteBody(BaseModel):
     unit_key: str
+    dialogue_override: str = Field(default="", max_length=2000,
+                                   description="单镜重做的修改台词；非空时进入参数快照与报价指纹")
 
 
 @router.post("/productions/{production_id}/quote", summary="对指定生成单元报价")
@@ -465,7 +473,8 @@ async def quote_unit(
     unit = next((u for u in units if u.get("unit_key") == body.unit_key), None)
     if unit is None:
         raise HTTPException(status_code=404, detail=f"生成单元不存在：{body.unit_key}")
-    params = await _enrich_unit_params(db, production, _build_unit_params(production, unit, user.id))
+    params = await _enrich_unit_params(
+        db, production, _build_unit_params(production, unit, user.id, body.dialogue_override))
     try:
         quote = await request_quote(
             db, params=params,
@@ -489,6 +498,8 @@ class GenerateBody(BaseModel):
     quote_id: int
     client_request_id: str = Field(min_length=8, max_length=128)
     drive: bool = True  # Mock 模式下同步驱动任务（真实模式忽略，交给调度器）
+    dialogue_override: str = Field(default="", max_length=2000,
+                                   description="必须与报价时一致；不一致按 QUOTE_CHANGED 拒绝")
 
 
 @router.post("/productions/{production_id}/generate", status_code=202, summary="确认预算并提交生成")
@@ -505,7 +516,8 @@ async def generate_unit(
     quote = await db.get(CvCostQuote, body.quote_id)
     if quote is None:
         raise HTTPException(status_code=404, detail="报价不存在")
-    params = await _enrich_unit_params(db, production, _build_unit_params(production, unit, user.id))
+    params = await _enrich_unit_params(
+        db, production, _build_unit_params(production, unit, user.id, body.dialogue_override))
     try:
         approval = await approve_and_reserve(
             db, quote=quote, params=params, client_request_id=body.client_request_id,
@@ -676,30 +688,64 @@ class ComposeBody(BaseModel):
     complete: bool = True  # true=完整成片（必需单元必须全部合格）；false=部分预览
 
 
+def _plan_units(production: CvProduction) -> list[dict[str, Any]]:
+    return (production.plan_json or {}).get("units") or []
+
+
+async def _validate_compose_selection(
+    db: AsyncSession, production: CvProduction, attempt: CvGenerationAttempt,
+) -> str:
+    """单条 selection 的归属与参数版本校验（P1-3/P2-1）。
+
+    返回错误说明；通过返回空串。attempt 必须属于本作品、对应计划中的
+    必需单元且参数版本与冻结计划一致——其他作品的合格 attempt 不能凑数，
+    旧参数版本的产物也不能冒充当前计划。
+    """
+    if attempt.production_id != production.id:
+        return (f"attempt {attempt.id} 不属于作品 {production.id}，不能进入本作品合成")
+    unit_key = (attempt.params_json or {}).get("unit_key") or ""
+    unit = next((u for u in _plan_units(production) if u.get("unit_key") == unit_key), None)
+    if unit is None:
+        return (f"attempt {attempt.id} 缺少与当前计划匹配的 unit_key（历史数据需先补映射，"
+                "不会按数量猜测放行）")
+    attempt_version = int((attempt.params_json or {}).get("params_version") or 0)
+    plan_version = int(unit.get("params_version") or 0)
+    if plan_version and attempt_version and attempt_version != plan_version:
+        return (f"attempt {attempt.id}（参数版本 v{attempt_version}）与计划单元 "
+                f"{unit_key}（v{plan_version}）不一致，请重做后再合成")
+    return ""
+
+
 async def _unit_coverage_error(
     db: AsyncSession, production: CvProduction,
+    *, selected_attempts: list[CvGenerationAttempt] | None = None,
 ) -> str | None:
-    """校验已确认计划的每个必需单元都有 REVIEW_APPROVED 的 attempt；缺失则返回说明。"""
-    plan = dict(production.plan_json or {})
-    units = plan.get("units") or []
+    """严格逐单元校验（P1-3）：完整成片要求每个必需 unit_key 都有明确映射。
+
+    - 以「本作品 REVIEW_APPROVED attempt 的 unit_key」为覆盖依据；
+    - selected_attempts 提供时以「用户明确选中的 attempt」为覆盖依据
+      （多次重做的合格版本只覆盖自己的单元，不能顶替其他镜头）；
+    - 无 unit_key 的历史 attempt 不计入覆盖（进入待处理，不按数量猜全）。
+    """
+    units = _plan_units(production)
     if not units:
         return "制作计划缺少生成单元，请先完成适配与计划"
-    attempts = (await db.execute(
-        select(CvGenerationAttempt).where(
-            CvGenerationAttempt.production_id == production.id,
-            CvGenerationAttempt.status == "REVIEW_APPROVED",
-        )
-    )).scalars().all()
+    if selected_attempts is None:
+        attempts = (await db.execute(
+            select(CvGenerationAttempt).where(
+                CvGenerationAttempt.production_id == production.id,
+                CvGenerationAttempt.status == "REVIEW_APPROVED",
+            )
+        )).scalars().all()
+    else:
+        attempts = selected_attempts
     covered_unit_keys = {
         unit_key for unit_key in (
             (a.params_json or {}).get("unit_key") for a in attempts
         ) if unit_key
     }
-    # 早期 attempt 参数无 unit_key 时回退按 attempt 数量粗粒度覆盖（保持兼容）
     missing = [u["unit_key"] for u in units if u.get("unit_key") not in covered_unit_keys]
-    if missing and len(attempts) < len(units):
-        return "、".join(missing)
-    return None
+    return "、".join(missing) if missing else None
 
 
 @router.post("/productions/{production_id}/compose", summary="合成（完整成片需全部必需单元合格）")
@@ -710,15 +756,6 @@ async def compose(
     from app.services.commercial.compose import build_subtitle_draft, compose_production
 
     production = await _get_production(db, production_id, user)
-    # 完整成片：必需单元缺合格版本 → 服务端阻断（不得静默跳过缺失镜头）
-    if body.complete:
-        missing = await _unit_coverage_error(db, production)
-        if missing:
-            raise HTTPException(
-                status_code=422,
-                detail=f"以下必需生成单元没有审核合格的版本，不能导出完整成片：{missing}。"
-                       "请先重做并审核通过，或选择部分预览导出（将明确标记为部分预览）。",
-            )
     pairs = []
     shots_meta = []
     timeline_cursor = 0  # 成片全局时间轴（秒表从 0 起拼接）
@@ -726,8 +763,23 @@ async def compose(
         attempt = await db.get(CvGenerationAttempt, selection.attempt_id)
         if attempt is None:
             raise HTTPException(status_code=404, detail=f"attempt {selection.attempt_id} 不存在")
+        # 归属/单元映射/参数版本校验（P1-3/P2-1：其他作品合格 attempt 不能凑数）
+        problem = await _validate_compose_selection(db, production, attempt)
+        if problem:
+            raise HTTPException(status_code=422, detail=problem)
         ranges = [(attempt.output_asset_key or "", int(s), int(e)) for s, e in selection.ranges]
         pairs.append((attempt, ranges))
+    # 完整成片：必需单元缺「明确选中」的合格版本 → 服务端阻断（严格逐单元，
+    # 不按数量回退；多次重做的合格版本只覆盖自身单元，不得顶替其他镜头）
+    if body.complete:
+        selected = [attempt for attempt, _ranges in pairs]
+        missing = await _unit_coverage_error(db, production, selected_attempts=selected)
+        if missing:
+            raise HTTPException(
+                status_code=422,
+                detail=f"以下必需生成单元没有审核合格的版本，不能导出完整成片：{missing}。"
+                       "请先重做并审核通过，或选择部分预览导出（将明确标记为部分预览）。",
+            )
         # 字幕草稿文本：来自本次选中 attempt 的定稿台词快照（重做后即新台词），
         # 不使用原片旧台词/时间码；多采用区间按分隔符对齐，无法对齐时首段承载整段
         dialogue_full = str((attempt.params_json or {}).get("approved_dialogue") or "")

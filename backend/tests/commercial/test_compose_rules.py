@@ -67,7 +67,8 @@ async def _production_with_units(db, admin, n_units: int = 2) -> CvProduction:
                            published_by=admin.id)
     actor = CvActor(name="规则达人", created_by=admin.id); db.add(actor); await db.flush()
     av = CvActorVersion(actor_id=actor.id, version=1, status="published", published_by=admin.id)
-    asset = CvMediaAsset(kind="audio", object_key="owned_voice_reference/t/rule.bin",
+    import uuid as _uuid
+    asset = CvMediaAsset(kind="audio", object_key=f"owned_voice_reference/t/{_uuid.uuid4().hex[:8]}.bin",
                          sha256="a"*64, mime="audio/mpeg", size_bytes=4,
                          source_role="owned_voice_reference", uploaded_by=admin.id)
     product = CvProduct(name="规则商品", created_by=admin.id); db.add(product); await db.flush()
@@ -248,3 +249,120 @@ async def test_mock_budget_not_inherited_by_real_mode(db_session, admin, client)
         assert set(pools) == {"mock", "real"}
         assert pools["mock"].total_amount == Decimal("50.00")
         assert pools["real"].reserved_amount == Decimal("0.01")
+
+
+# ---------------------------------------------------------------- P1-3 严格逐单元反例
+
+@pytest.mark.asyncio
+async def test_same_unit_redone_cannot_cover_other_units(db_session, admin, client) -> None:
+    """4 单元、4 个合格 attempt 全属 U001 → U002-U004 仍判缺失（数量回退已移除）。"""
+    production = await _production_with_units(db_session, admin, n_units=4)
+    attempts = await _attempts(db_session, production.id)
+    # 把全部 4 个 attempt 的 unit_key 都指向 U001（模拟对 U001 反复重做）
+    for a in attempts:
+        a.params_json = {"unit_key": "U001", "params_version": 1}
+    await db_session.commit()
+    for a in attempts:
+        await _approve(db_session, client, a.id)
+    resp = await client.post(f"/api/commercial/productions/{production.id}/compose", json={
+        "selections": [{"attempt_id": a.id, "ranges": [[0, 4000]]} for a in attempts[:1]],
+        "complete": True,
+    })
+    assert resp.status_code == 422, resp.text
+    for key in ("U002", "U003", "U004"):
+        assert key in resp.json()["detail"], resp.text
+
+
+@pytest.mark.asyncio
+async def test_legacy_attempt_without_unit_key_stays_pending(db_session, admin, client) -> None:
+    """历史 attempt 无 unit_key：不按数量猜全，完整成片进入待处理（阻断）。"""
+    production = await _production_with_units(db_session, admin, n_units=2)
+    attempts = await _attempts(db_session, production.id)
+    for a in attempts:
+        a.params_json = {}  # 历史数据形态：无 unit_key
+    await db_session.commit()
+    for a in attempts:
+        await _approve(db_session, client, a.id)
+    resp = await client.post(f"/api/commercial/productions/{production.id}/compose", json={
+        "selections": [{"attempt_id": a.id, "ranges": [[0, 4000]]} for a in attempts],
+        "complete": True,
+    })
+    assert resp.status_code == 422, resp.text
+    assert "unit_key" in resp.json()["detail"], "历史缺映射必须进入待处理而非放行"
+
+
+@pytest.mark.asyncio
+async def test_other_production_attempt_cannot_be_used(db_session, admin, client) -> None:
+    """其他作品的合格 attempt 不能被拿来凑数（归属校验）。"""
+    mine = await _production_with_units(db_session, admin, n_units=1)
+    other = await _production_with_units(db_session, admin, n_units=1)
+    other_attempts = await _attempts(db_session, other.id)
+    await _approve(db_session, client, other_attempts[0].id)
+    mine_attempts = await _attempts(db_session, mine.id)
+    await _approve(db_session, client, mine_attempts[0].id)
+    resp = await client.post(f"/api/commercial/productions/{mine.id}/compose", json={
+        "selections": [{"attempt_id": other_attempts[0].id, "ranges": [[0, 4000]]}],
+        "complete": True,
+    })
+    assert resp.status_code == 422, resp.text
+    assert "不属于" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_params_version_mismatch_rejected(db_session, admin, client) -> None:
+    """旧参数版本的 attempt 不能冒充当前计划版本。"""
+    production = await _production_with_units(db_session, admin, n_units=1)
+    attempts = await _attempts(db_session, production.id)
+    attempts[0].params_json = {"unit_key": "U001", "params_version": 1}
+    # 计划推进到 v2（params_version 变化）
+    plan = dict(production.plan_json)
+    plan["units"] = [dict(u, params_version=2) for u in plan["units"]]
+    production.plan_json = plan
+    await db_session.commit()
+    await _approve(db_session, client, attempts[0].id)
+    resp = await client.post(f"/api/commercial/productions/{production.id}/compose", json={
+        "selections": [{"attempt_id": attempts[0].id, "ranges": [[0, 4000]]}],
+        "complete": True,
+    })
+    assert resp.status_code == 422, resp.text
+    assert "参数版本" in resp.json()["detail"] or "v1" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_valid_replacement_selected_allows_master(db_session, admin, client) -> None:
+    """正例：同单元多次重做后，明确选中最新合格版本可导出 master。"""
+    production = await _production_with_units(db_session, admin, n_units=1)
+    attempts = await _attempts(db_session, production.id)
+    attempts[0].params_json = {"unit_key": "U001", "params_version": 1}
+    await db_session.commit()
+    await _approve(db_session, client, attempts[0].id)
+    # 重做：新增第二个同单元合格 attempt
+    from app.models_commercial import CvCostQuote, CvGenerationAttempt
+    from decimal import Decimal as _D
+    from app.services.commercial import mock_provider
+
+    quote = CvCostQuote(quote_key=f"rq-{production.id}-redo", model_id="m",
+                        request_fingerprint="fpr", estimated_amount=_D("0.05"), currency="USD")
+    db_session.add(quote)
+    await db_session.flush()
+    pred = mock_provider.new_mock_prediction()
+    mock_provider.mock_clip_path(pred)
+    redo = CvGenerationAttempt(
+        production_id=production.id, client_request_id=f"rule-{production.id}-redo",
+        payload_hash="fpr", params_json={"unit_key": "U001", "params_version": 1},
+        quote_id=quote.id, status="GENERATED",
+        provider_prediction_id=pred, output_asset_key=f"{pred}.mp4",
+        created_by=admin.id,
+    )
+    db_session.add(redo)
+    await db_session.commit()
+    await _approve(db_session, client, redo.id)
+    resp = await client.post(f"/api/commercial/productions/{production.id}/compose", json={
+        "selections": [{"attempt_id": redo.id, "ranges": [[0, 4000]]}],
+        "complete": True,
+    })
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["kind"] == "master"
+    # 旧 attempt 与费用留痕不受影响
+    rows = await _attempts(db_session, production.id)
+    assert len(rows) == 2
