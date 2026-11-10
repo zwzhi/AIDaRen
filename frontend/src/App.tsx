@@ -33,6 +33,7 @@ import CanvasPage from './pages/drama/canvas/CanvasPage'
 import EpisodeStoryboardPage from './pages/drama/episodeCanvas/EpisodeStoryboardPage'
 import TeamInvitationPage from './features/teams/TeamInvitationPage'
 import RequireAuth from './pages/drama/RequireAuth'
+import { CommercialActorsPage, CommercialProductsPage, CommercialSettingsPage, CommercialStudioPage, CommercialTasksPage, CommercialTemplatesPage } from './features/commercial/pages'
 import { setWorkspaceTeam, subscribeWorkspace, workspaceScope } from './features/teams/workspaceScope'
 import TeamPage from './features/teams/TeamPage'
 import { TeamPreviewProvider } from './features/teams/TeamPreviewContext'
@@ -65,6 +66,12 @@ export default function App() {
         <Route path="/tools/image" element={<RequireAuth><GenerationPage kind="image" /></RequireAuth>} />
         <Route path="/tools/audio" element={<RequireAuth><GenerationPage kind="audio" /></RequireAuth>} />
         <Route path="/tasks" element={<RequireAuth><GenerationTasksPage /></RequireAuth>} />
+        <Route path="/commercial/templates" element={<RequireAuth><CommercialTemplatesPage /></RequireAuth>} />
+        <Route path="/commercial/actors" element={<RequireAuth><CommercialActorsPage /></RequireAuth>} />
+        <Route path="/commercial/products" element={<RequireAuth><CommercialProductsPage /></RequireAuth>} />
+        <Route path="/commercial/studio" element={<RequireAuth><CommercialStudioPage /></RequireAuth>} />
+        <Route path="/commercial/tasks" element={<RequireAuth><CommercialTasksPage /></RequireAuth>} />
+        <Route path="/commercial/settings" element={<RequireAuth><CommercialSettingsPage /></RequireAuth>} />
         <Route path="/assets" element={<AssetLibraryPage />} />
         <Route path="/help" element={<HelpPage />} />
         <Route path="/contact" element={<ContactPage />} />

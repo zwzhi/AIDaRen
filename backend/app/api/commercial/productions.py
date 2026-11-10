@@ -461,6 +461,7 @@ async def quote_unit(
             db, params=params,
             base_url=get_settings().atlas_base_url, api_key=(get_settings().atlas_api_key or ""),
         )
+        await db.commit()  # 报价必须落库，生成请求才能跨会话引用
     except RequestBuildError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
     return {
@@ -613,6 +614,7 @@ async def review_attempt(
         db, attempt, reviewer_id=user.id, dimensions=normalized,
         speech_required=body.speech_required,
     )
+    await db.commit()  # 审核结果必须落库（追加历史 + 状态推进）
     return {"attempt_id": attempt.id, "overall": decision.overall}
 
 

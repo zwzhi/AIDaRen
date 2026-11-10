@@ -163,6 +163,28 @@ async def download_asset(
     )
 
 
+@router.post("/sources/by-asset/{asset_id}", summary="把已上传的原片资产登记为参考源")
+async def register_reference_source(
+    asset_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from app.models_commercial import CvReferenceSource
+
+    asset = await db.get(CvMediaAsset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="素材不存在")
+    if asset.source_role != "reference_source_video":
+        raise HTTPException(status_code=400, detail="仅 reference_source_video 角色可登记为参考源")
+    source = CvReferenceSource(
+        team_id=None, media_asset_id=asset.id, duration_ms=asset.duration_ms,
+        origin_note="页面上传", uploaded_by=user.id, status="probed",
+    )
+    db.add(source)
+    await db.commit()
+    return {"source_id": source.id}
+
+
 @router.post("/sources/{source_id}/analyze", status_code=202, summary="创建解析任务（幂等）")
 async def analyze_source(
     source_id: int,
