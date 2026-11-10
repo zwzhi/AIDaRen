@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
+import { COMMERCIAL_PROJECT, COMMERCIAL_HOME } from '../../lib/projectScope'
 import { ArrowLeft, ArrowRight, Check, Clapperboard, Clock3, LoaderCircle, Save, Sparkles } from 'lucide-react'
 import { api, type PipelineMode, type Project, type Template, type VoicePreset } from '../../api'
 import AppShell from '../../components/layout/AppShell'
@@ -20,6 +21,11 @@ export default function CreateProjectPage() {
   const nav = useNavigate()
   const [params] = useSearchParams()
   const editId = Number(params.get('project')) || null
+  // 商业项目：无参数的旧"新建"页不再进入旧制作流程，引导到商业模板入口；
+  // 携带旧作品/模板参数的地址保持原行为（历史数据与正在进行的编辑不受影响）。
+  if (COMMERCIAL_PROJECT && params.size === 0) {
+    return <OldEntryGuide />
+  }
   const requestedTemplate = creationTemplateId(params.get('template'))
   const requestedPipelineMode = shortVideoPipelineMode(params.get('mode'))
   const returnPath = `/studio/new${params.size ? `?${params}` : ''}`
@@ -285,4 +291,21 @@ export default function CreateProjectPage() {
       </>}
     </div>
   </AppShell>
+}
+
+
+/** 商业项目下旧"新建"页的引导：说明去向并一键进入商业模板库。 */
+function OldEntryGuide() {
+  return (
+    <div className="pf-container" style={{ maxWidth: 640, margin: '80px auto', textAlign: 'center' }}>
+      <h2>短视频制作已升级为「商业模板工作台」</h2>
+      <p style={{ color: '#666' }}>
+        参考视频解析一次、模板长期复用：上传参考片 → 校准模板 → 填入我方达人、音色、商品与新文案 → 分镜生成 → 审核 → 合成导出。
+      </p>
+      <p>
+        <Link to={COMMERCIAL_HOME} className="pf-btn pf-btn-primary">进入商业模板库</Link>
+      </p>
+      <p style={{ fontSize: 12, color: '#999' }}>历史作品请从「任务与作品」或原历史列表进入；本页保留旧作品编辑能力。</p>
+    </div>
+  )
 }

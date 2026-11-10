@@ -2,6 +2,7 @@ import { USER_UPDATED_EVENT } from '../lib/userEvents'
 import { useState } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { COMMERCIAL_PROJECT, COMMERCIAL_HOME } from '../lib/projectScope'
 import { api } from '../api'
 import BrandMark from '../components/BrandMark'
 import LanguageSwitch from '../components/layout/LanguageSwitch'
@@ -30,7 +31,8 @@ export default function AuthPage() {
   const nav = useNavigate()
   const { t } = useI18n()
   const [params, setSearchParams] = useSearchParams()
-  const nextPath = safeNextPath(params.get('next'), '/')
+  // 商业项目：登录默认落点=商业模板库；显式 next 参数仍优先生效
+  const nextPath = safeNextPath(params.get('next'), COMMERCIAL_PROJECT ? COMMERCIAL_HOME : '/')
   /*
    * mode 当前表单模式
    * email / password / confirmPassword / nickname 表单字段

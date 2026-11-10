@@ -168,7 +168,8 @@ async def poll_attempt(
     from app.services.commercial import mock_provider
 
     if prediction_id.startswith("MOCK-"):
-        clip = mock_provider.mock_clip_path(prediction_id)
+        duration_ms = int((attempt.params_json or {}).get("duration_ms") or 0) or None
+        clip = mock_provider.mock_clip_path(prediction_id, duration_ms)
         attempt.output_asset_key = clip.name
         attempt.status = "GENERATED"
         await _record_pending_usage(db, attempt)

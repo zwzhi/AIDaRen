@@ -689,14 +689,24 @@ async def compose(
             )
     pairs = []
     shots_meta = []
+    timeline_cursor = 0  # 成片全局时间轴（秒表从 0 起拼接）
     for selection in body.selections:
         attempt = await db.get(CvGenerationAttempt, selection.attempt_id)
         if attempt is None:
             raise HTTPException(status_code=404, detail=f"attempt {selection.attempt_id} 不存在")
         ranges = [(attempt.output_asset_key or "", int(s), int(e)) for s, e in selection.ranges]
         pairs.append((attempt, ranges))
-        for s, e in selection.ranges:
-            shots_meta.append({"shot_key": f"attempt{attempt.id}", "dialogue": "", "adopt": (int(s), int(e))})
+        # 字幕草稿文本：来自本次选中 attempt 的定稿台词快照（重做后即新台词），
+        # 不使用原片旧台词/时间码；多采用区间按分隔符对齐，无法对齐时首段承载整段
+        dialogue_full = str((attempt.params_json or {}).get("approved_dialogue") or "")
+        pieces = dialogue_full.split("；") if dialogue_full else []
+        for idx, (s, e) in enumerate(selection.ranges):
+            text = pieces[idx] if idx < len(pieces) else (dialogue_full if idx == 0 else "")
+            # 字幕时间码对齐成片全局时间轴（拼接后的绝对区间），非单元内相对区间
+            span = max(0, int(e) - int(s))
+            shots_meta.append({"shot_key": f"attempt{attempt.id}", "dialogue": text.strip(),
+                               "adopt": (timeline_cursor, timeline_cursor + span)})
+            timeline_cursor += span
     try:
         result = await compose_production(db, selections=pairs)
     except Exception as exc:  # noqa: BLE001
@@ -706,7 +716,8 @@ async def compose(
     if body.subtitles:
         draft = build_subtitle_draft(shots=shots_meta, source_transcript=None)
         lines = []
-        for i, item in enumerate(draft, 1):
+        numbered = [item for item in draft if item.get("text")]  # 空台词不生成字幕条目
+        for i, item in enumerate(numbered, 1):
             def _ts(ms: int) -> str:
                 h, r = divmod(ms, 3600000)
                 m, r = divmod(r, 60000)

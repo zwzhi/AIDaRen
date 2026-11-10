@@ -31,7 +31,7 @@ export type Unit = {
   covered_shot_keys: string[]; adopt_ranges: [string, number, number][]; notes?: string[]
 }
 export type AttemptOut = {
-  id: number; status: string; prediction_id: string | null
+  id: number; status: string; attempt_no?: number; unit_key?: string | null; prediction_id: string | null
   output_asset_key: string | null; error_code: string | null; error_message: string | null
 }
 export type ProductionDetail = {

@@ -53,17 +53,22 @@ def new_mock_prediction() -> str:
     return f"{MOCK_LABEL}-pred-{uuid.uuid4().hex[:12]}"
 
 
-def mock_clip_path(prediction_id: str) -> Path:
-    """为 MOCK 预测生成本地测试片段（真实 FFmpeg testsrc，非云产物）。"""
+def mock_clip_path(prediction_id: str, duration_ms: int | None = None) -> Path:
+    """为 MOCK 预测生成本地测试片段（真实 FFmpeg testsrc，非云产物）。
+
+    duration_ms 来自该单元已确认计划（request_duration_ms）；缺省回退 5s，
+    避免采用区间被 Mock 素材截短（成片时长必须等于计划采用区间之和）。
+    """
     from app.services.commercial.storage import commercial_storage_root
 
     root = commercial_storage_root() / "outputs"
     root.mkdir(parents=True, exist_ok=True)
     path = root / f"{prediction_id}.mp4"
-    if not path.is_file():
+    if not path.is_file() or duration_ms:
+        seconds = max(1, round((duration_ms or 5_000) / 1000))
         subprocess.run(
             ["ffmpeg", "-y", "-loglevel", "error", "-f", "lavfi",
-             "-i", f"testsrc=duration=5:size=320x180:rate=12",
+             "-i", f"testsrc=duration={seconds}:size=320x180:rate=12",
              "-pix_fmt", "yuv420p", str(path)],
             check=True, capture_output=True,
         )

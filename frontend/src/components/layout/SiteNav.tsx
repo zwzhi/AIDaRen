@@ -12,6 +12,7 @@ import CreateChoiceModal from '../ui/CreateChoiceModal'
 import { USER_UPDATED_EVENT } from '../../lib/userEvents'
 import { loadSessionUser } from '../../lib/sessionUser'
 import { CODE_VIDEO_URL } from '../../lib/siteLinks'
+import { COMMERCIAL_PROJECT, COMMERCIAL_NAV } from '../../lib/projectScope'
 import { HOME_NAV, CREATION_NAV, RESOURCE_NAV, PERSONAL_NAV, resolveNavActive, type NavActive } from '../../lib/siteNavigation'
 import { useI18n } from '../../i18n'
 import LanguageSwitch from './LanguageSwitch'
@@ -149,6 +150,10 @@ export default function SiteNav({ active }: Props) {
       nav('/auth?next=/')
       return
     }
+    if (COMMERCIAL_PROJECT) {
+      nav('/commercial/templates')  // 商业项目：开始创建=进入商业模板库
+      return
+    }
     setCreateOpen(true)
   }
 
@@ -209,11 +214,15 @@ export default function SiteNav({ active }: Props) {
     <header className={`pf-app-topbar${accountOpen ? ' pf-app-topbar--account-open' : ''}`} data-locale={locale}>
       <div className="pf-topbar-brand" onClick={() => selectTeam(null)}><BrandMark /></div>
       <nav className="pf-topbar-links" aria-label={t('nav.main')}>
-        {renderLink(HOME_NAV)}
-        {CREATION_NAV.map((item) => renderLink(item))}
-        {renderMarketplace()}
-        {renderCodeVideo()}
-        {RESOURCE_NAV.map((item) => renderLink(item))}
+        {COMMERCIAL_PROJECT
+          ? COMMERCIAL_NAV.map((item) => <Link key={item.key} to={item.path}
+              className={`pf-topbar-link${location.pathname.startsWith(item.path) ? ' is-active' : ''}`}
+              onClick={() => setMenuOpen(false)}><span>{item.label}</span></Link>)
+          : <>{renderLink(HOME_NAV)}
+            {CREATION_NAV.map((item) => renderLink(item))}
+            {renderMarketplace()}
+            {renderCodeVideo()}
+            {RESOURCE_NAV.map((item) => renderLink(item))}</>}
       </nav>
       <div className="pf-topbar-actions">
         <div className="pf-topbar-language"><LanguageSwitch /></div>
@@ -228,9 +237,17 @@ export default function SiteNav({ active }: Props) {
       <section ref={menuRef} id="pf-topbar-menu" className="pf-topbar-menu" role="dialog" aria-modal="true" aria-label={t('nav.mobileNav')}>
         <div className="pf-topbar-menu-heading"><div><span>{t('nav.main')}</span><strong>{currentLabel}</strong></div><button ref={closeButtonRef} type="button" className="pf-topbar-menu-close" aria-label={t('nav.closeMenu')} onClick={() => setMenuOpen(false)}><X size={20} aria-hidden /></button></div>
         <nav aria-label={t('nav.main')}>
-          <div className="pf-topbar-menu-home">{renderLink(HOME_NAV, true)}</div>
-          <div className="pf-topbar-menu-group"><span>{t('nav.creation')}</span><div>{CREATION_NAV.map((item) => renderLink(item, true))}</div></div>
-          <div className="pf-topbar-menu-group"><div>{renderMarketplace(true)}{renderCodeVideo(true)}{RESOURCE_NAV.map((item) => renderLink(item, true))}</div></div>
+          {COMMERCIAL_PROJECT ? (
+            <div className="pf-topbar-menu-group"><span>商业短视频模板</span><div>{COMMERCIAL_NAV.map((item) => (
+              <Link key={item.key} to={item.path} className="pf-topbar-menu-link"
+                onClick={() => setMenuOpen(false)}><span>{item.label}</span></Link>))}</div></div>
+          ) : (
+            <>
+              <div className="pf-topbar-menu-home">{renderLink(HOME_NAV, true)}</div>
+              <div className="pf-topbar-menu-group"><span>{t('nav.creation')}</span><div>{CREATION_NAV.map((item) => renderLink(item, true))}</div></div>
+              <div className="pf-topbar-menu-group"><div>{renderMarketplace(true)}{renderCodeVideo(true)}{RESOURCE_NAV.map((item) => renderLink(item, true))}</div></div>
+            </>
+          )}
         </nav>
         <div className="pf-topbar-menu-footer">
           <LanguageSwitch />

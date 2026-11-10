@@ -5,6 +5,7 @@ import DialogHost from './components/ui/DialogHost'
 import BillingAlertHost from './components/billing/BillingAlertHost'
 import { DramaGenQueuePanel } from './components/drama/DramaGenQueuePanel'
 import WeChatGroupFab from './components/layout/WeChatGroupFab'
+import { COMMERCIAL_PROJECT } from './lib/projectScope'
 import AuthPage from './pages/AuthPage'
 import HistoryPage from './pages/HistoryPage'
 import HomePage from './pages/HomePage'
@@ -105,7 +106,7 @@ export default function App() {
         <Route path="/drama/projects/:projectId/canvas" element={<CanvasPage />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-      <WeChatGroupFab />
+      {!COMMERCIAL_PROJECT && <WeChatGroupFab />}
       <PersonalBusinessOverlays />
       <DialogHost />
     </BrowserRouter></TeamPreviewProvider>

@@ -244,12 +244,16 @@ async def approve_and_reserve(
     reservation = await _reserve_with_pool_row(db, quote=quote, created_by=created_by)
     from sqlalchemy import func as _func
 
-    max_no = (await db.execute(
-        select(_func.max(CvGenerationAttempt.attempt_no)).where(
-            CvGenerationAttempt.production_id == production_id,
-            CvGenerationAttempt.client_request_id == client_request_id,
-        )
-    )).scalar_one_or_none()
+    # 同作品同单元的尝试次数递增（重做=第N次；不影响全局 ID/上游ID/费用引用）
+    unit_key = str(params.get("unit_key") or "")
+    stmt = select(_func.max(CvGenerationAttempt.attempt_no)).where(
+        CvGenerationAttempt.production_id == production_id,
+    )
+    if unit_key:
+        stmt = stmt.where(CvGenerationAttempt.params_json["unit_key"].as_string() == unit_key)
+    else:
+        stmt = stmt.where(CvGenerationAttempt.client_request_id == client_request_id)
+    max_no = (await db.execute(stmt)).scalar_one_or_none()
     attempt = CvGenerationAttempt(
         production_id=production_id, generation_unit_id=generation_unit_id,
         attempt_no=int(max_no or 0) + 1, client_request_id=client_request_id, payload_hash=payload_hash,

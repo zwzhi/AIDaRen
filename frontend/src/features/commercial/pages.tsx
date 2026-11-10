@@ -463,10 +463,27 @@ export function CommercialTasksPage() {
   }
   const compose = async () => {
     if (!detail) return
-    const approved = detail.attempts.filter(a => a.status === 'REVIEW_APPROVED')
-    if (!approved.length) { setMsg('没有通过审核的镜头，不能合成'); return }
+    // 每个必需单元选最新合格版本，采用区间=该单元计划 adopt_ranges
+    //（成片时长必须等于用户确认的计划采用区间之和，不被素材或快捷实现截短）
+    const units = detail.plan?.units || []
+    const selections: { attempt_id: number; ranges: number[][] }[] = []
+    const missing: string[] = []
+    for (const u of units) {
+      const mine = detail.attempts
+        .filter(a => a.unit_key === u.unit_key && a.status === 'REVIEW_APPROVED')
+        .sort((x, y) => y.id - x.id)
+      if (!mine.length) { missing.push(u.unit_key); continue }
+      const best = mine[0]
+      const ranges = (u.adopt_ranges || []).map(([, s, e]) => [s, e])
+      selections.push({ attempt_id: best.id, ranges })
+    }
+    if (missing.length) {
+      setMsg(`以下必需单元没有审核合格的版本，不能导出完整成片：${missing.join('、')}（可先重做并审核，服务端同样会阻断）`)
+      return
+    }
+    if (!selections.length) { setMsg('制作计划缺少生成单元'); return }
     try {
-      const r = await commercialApi.compose(detail.id, approved.map(a => ({ attempt_id: a.id, ranges: [[0, 4000]] })), true)
+      const r = await commercialApi.compose(detail.id, selections, true)
       setExportId(r.export_id)
       setMsg(`合成完成：导出 #${r.export_id}（${r.kind === 'partial_preview' ? '部分预览' : '完整成片'}，采用总长 ${(r.total_adopt_ms / 1000).toFixed(1)}s）`)
       const ex = await commercialApi.getExport(r.export_id)
@@ -489,7 +506,10 @@ export function CommercialTasksPage() {
           <p>费用：总计 ${detail.costs.total_usd} · 待结算 ${detail.costs.pending_usd}（{detail.costs.settlement_note}）</p>
           {detail.attempts.map(a => (
             <div key={a.id} style={card}>
-              <b>尝试 #{a.id}</b><span style={tag}>{a.status}</span>
+              <b>尝试 #{a.id}</b>
+              {a.unit_key && <span style={tag}>{a.unit_key}</span>}
+              {a.attempt_no != null && a.attempt_no > 1 && <span style={tag}>第{a.attempt_no}次</span>}
+              <span style={tag}>{a.status}</span>
               {a.prediction_id && <span style={tag}>{a.prediction_id}</span>}
               {a.error_message && <p style={{ color: '#b00' }}>{a.error_message}</p>}
               {a.status === 'GENERATED' && (

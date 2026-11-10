@@ -1,0 +1,121 @@
+{
+  "id": 4,
+  "production_id": 4,
+  "kind": "master",
+  "total_adopt_ms": 30000,
+  "srt_content": "1\n00:00:00,000 --> 00:00:09,000\n贴敷八小时持久清凉\n\n2\n00:00:09,000 --> 00:00:19,000\n贴敷八小时持久清凉\n\n3\n00:00:19,000 --> 00:00:24,000\n贴敷八小时持久清凉\n\n4\n00:00:24,000 --> 00:00:30,000\n贴敷八小时持久清凉\n",
+  "srt_aligned": false,
+  "subtitled_path": "D:\\AI Project\\AIDaRen\\backend\\app\\data\\commercial\\exports\\export-023703e155a4-subtitled.mp4",
+  "selections": {
+    "items": [
+      {
+        "attempt_id": 10,
+        "ranges": [
+          [
+            0,
+            9000
+          ]
+        ]
+      },
+      {
+        "attempt_id": 11,
+        "ranges": [
+          [
+            0,
+            10000
+          ]
+        ]
+      },
+      {
+        "attempt_id": 12,
+        "ranges": [
+          [
+            0,
+            5000
+          ]
+        ]
+      },
+      {
+        "attempt_id": 13,
+        "ranges": [
+          [
+            0,
+            6000
+          ]
+        ]
+      }
+    ],
+    "plan_units": [
+      {
+        "unit_key": "U001",
+        "request_duration_ms": 9000,
+        "covered_shot_keys": [
+          "S01"
+        ],
+        "adopt_ranges": [
+          [
+            "S01",
+            0,
+            9000
+          ]
+        ],
+        "params_version": 1,
+        "notes": []
+      },
+      {
+        "unit_key": "U002",
+        "request_duration_ms": 10000,
+        "covered_shot_keys": [
+          "S02"
+        ],
+        "adopt_ranges": [
+          [
+            "S02",
+            0,
+            10000
+          ]
+        ],
+        "params_version": 1,
+        "notes": [
+          "超长镜头拆分：原目标 15000ms，本段 10000ms，原片内区间起点 0ms"
+        ]
+      },
+      {
+        "unit_key": "U003",
+        "request_duration_ms": 5000,
+        "covered_shot_keys": [
+          "S02"
+        ],
+        "adopt_ranges": [
+          [
+            "S02",
+            0,
+            5000
+          ]
+        ],
+        "params_version": 1,
+        "notes": [
+          "超长镜头拆分：原目标 15000ms，本段 5000ms，原片内区间起点 10000ms"
+        ]
+      },
+      {
+        "unit_key": "U004",
+        "request_duration_ms": 6000,
+        "covered_shot_keys": [
+          "S03"
+        ],
+        "adopt_ranges": [
+          [
+            "S03",
+            0,
+            6000
+          ]
+        ],
+        "params_version": 1,
+        "notes": []
+      }
+    ],
+    "complete": true
+  },
+  "created_at": "2026-11-10T11:03:37.537342+00:00"
+}
