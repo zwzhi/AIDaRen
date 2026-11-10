@@ -86,6 +86,22 @@ class Settings(BaseSettings):
     ark_mock: bool = False
     # 本地媒体联调：文字仍请求真实 LLM，图片/视频/语音仅留痕并返回默认素材。
     local_media_mock: bool = False
+
+    # ---- 商业模板业务域（commercial）：独立于 TokenFree 的 Atlas 通道 ----
+    # T01：Atlas 配置使用独立命名空间，不经 SystemModelChannelRow，
+    # 也不被 apply_tokenfree_flat_overlay 触碰（后者只写 openai_*/ark_*）。
+    commercial_enabled: bool = False
+    # 付费执行总开关：管理员填密钥、验证能力、确认预算后才可开启
+    commercial_paid_execution_enabled: bool = False
+    # 离线 Mock：界面与流程测试用，生产必须关闭
+    commercial_mock_mode: bool = True
+    # 已通过真实契约验证的模型 ID（逗号分隔）；未验证模型禁止付费提交
+    commercial_verified_models: str = ""
+    atlas_base_url: str = "https://api.atlascloud.ai"
+    # 密钥只存后端（DB flat 加密），响应恒为空串
+    atlas_api_key: str = ""
+    gemini_analysis_model_id: str = ""
+    h3_developer_reference_model_id: str = ""
     # 本地连接共享测试库时关闭，避免本机和服务器同时消费、恢复同一队列。
     task_runtime_enabled: bool = True
     # 未单独配置队列时，每个队列使用的并发上限。

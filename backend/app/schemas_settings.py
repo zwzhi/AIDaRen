@@ -64,6 +64,17 @@ class AdminModelSettingsOut(BaseModel):
 
     ark_mock: bool = Field(default=False, description="是否启用上游生成模拟模式")
 
+    # 商业模板业务域（Atlas 通道，独立于 TokenFree）
+    commercial_enabled: bool = Field(default=False, description="是否启用商业短视频模板业务域")
+    commercial_paid_execution_enabled: bool = Field(default=False, description="商业域付费执行总开关；需先配置密钥并验证模型能力")
+    commercial_mock_mode: bool = Field(default=True, description="商业域离线 Mock 模式；生产环境必须关闭")
+    commercial_verified_models: str = Field(default="", description="已通过真实契约验证的商业域模型 ID，逗号分隔；未验证模型禁止付费提交")
+    atlas_base_url: str = Field(default="https://api.atlascloud.ai", description="Atlas API 基础地址；仅供商业域使用，与 TokenFree 通道相互独立")
+    atlas_api_key: str = Field(default="", description="Atlas API 密钥；响应始终为空串，请通过 has_atlas_api_key 判断是否已配置")
+    has_atlas_api_key: bool = Field(default=False, description="是否已配置 Atlas API 密钥；实际密钥不在响应中返回")
+    gemini_analysis_model_id: str = Field(default="", description="商业域视频解析使用的 Gemini 模型 ID")
+    h3_developer_reference_model_id: str = Field(default="", description="商业域视频生成使用的 MiniMax H3 Developer Reference 模型 ID")
+
     # Aliyun OSS
     oss_enabled: bool = Field(default=False, description="是否启用阿里云 OSS 媒体上传")
     oss_endpoint: str = Field(default="", description="阿里云 OSS 服务域名")
@@ -208,6 +219,17 @@ class AdminModelSettingsPatch(BaseModel):
     drama_fragment_max_attempts: int | None = Field(default=None, description="单个漫剧分镜视频允许的最大尝试次数；省略或 null 时不修改")
 
     ark_mock: bool | None = Field(default=None, description="是否启用上游生成模拟模式；省略或 null 时不修改")
+
+    # 商业模板业务域（Atlas 通道）
+    commercial_enabled: bool | None = Field(default=None, description="是否启用商业短视频模板业务域；省略或 null 时不修改")
+    commercial_paid_execution_enabled: bool | None = Field(default=None, description="商业域付费执行总开关；省略或 null 时不修改")
+    commercial_mock_mode: bool | None = Field(default=None, description="商业域离线 Mock 模式；省略或 null 时不修改")
+    commercial_verified_models: str | None = Field(default=None, description="已验证契约的商业域模型 ID 逗号分隔清单；省略或 null 时不修改")
+    atlas_base_url: str | None = Field(default=None, description="Atlas API 基础地址；省略或 null 时不修改")
+    atlas_api_key: str | None = Field(default=None, description="Atlas API 密钥；省略、null 或空白字符串时保留原值；使用 clear_atlas_api_key=true 清空")
+    clear_atlas_api_key: bool = Field(default=False, description="是否显式清空 Atlas API 密钥；默认为 false；若同时提交非空新值，以新值为准")
+    gemini_analysis_model_id: str | None = Field(default=None, description="商业域 Gemini 解析模型 ID；省略或 null 时不修改")
+    h3_developer_reference_model_id: str | None = Field(default=None, description="商业域 H3 生成模型 ID；省略或 null 时不修改")
 
     oss_enabled: bool | None = Field(default=None, description="是否启用阿里云 OSS 媒体上传；省略或 null 时不修改")
     oss_endpoint: str | None = Field(default=None, description="阿里云 OSS 服务域名；省略或 null 时不修改")
@@ -411,6 +433,14 @@ def model_config_field_names() -> tuple[str, ...]:
         "marketplace_share_android_package_name",
         "marketplace_share_android_sha256_fingerprints",
         "marketplace_max_duration_seconds",
+        "commercial_enabled",
+        "commercial_paid_execution_enabled",
+        "commercial_mock_mode",
+        "commercial_verified_models",
+        "atlas_base_url",
+        "atlas_api_key",
+        "gemini_analysis_model_id",
+        "h3_developer_reference_model_id",
     )
 
 
@@ -418,6 +448,7 @@ SECRET_FIELD_FLAGS: dict[str, str] = {
     "apple_private_key": "has_apple_private_key",
     "openai_api_key": "has_openai_api_key",
     "ark_api_key": "has_ark_api_key",
+    "atlas_api_key": "has_atlas_api_key",
     "oss_access_key_id": "has_oss_access_key_id",
     "oss_access_key_secret": "has_oss_access_key_secret",
     "tos_access_key": "has_tos_access_key",
