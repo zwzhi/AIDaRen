@@ -28,6 +28,25 @@ logger = logging.getLogger("app.commercial.generation")
 _POLL_BACKOFF_SEC = 8.0
 
 
+async def _transition_task_to_poll(db: AsyncSession, task: Any, prediction_id: str) -> None:
+    """把任务行推进到 awaiting_poll：上游 ID 落行、安排轮询、释放租约（P1-4）。
+
+    executor 传入的 task 可能是已脱管实例（其会话在读事务关闭后结束），
+    因此一律按 id 在当前会话重载任务行再写，保证状态真正持久化；
+    单元测试传入的不存在替身 id 自动跳过（不视为错误）。
+    """
+    from app.models_tasks import TaskRun
+
+    row = await db.get(TaskRun, int(task.id))
+    if row is not None:
+        row.status = "awaiting_poll"
+        row.provider_task_id = prediction_id
+        row.next_action_at = datetime.now(UTC) + timedelta(seconds=_POLL_BACKOFF_SEC)
+        row.lease_token = None
+        row.lease_until = None
+    await db.commit()
+
+
 async def execute_generation_task(
     task: Any,
     *,
@@ -55,8 +74,7 @@ async def execute_generation_task(
     # 恢复路径：已有上游任务号 → 只查询（查询/下载不受新任务付费门影响）
     if attempt.provider_prediction_id:
         attempt.status = "PROVIDER_RUNNING"
-        task.provider_task_id = attempt.provider_prediction_id
-        await db.commit()
+        await _transition_task_to_poll(db, task, attempt.provider_prediction_id)
         return {"awaiting_poll": True}
 
     # 首次提交前的门禁重检（P1-6）：任务可能在排队期间配置降级——
@@ -153,11 +171,12 @@ async def execute_generation_task(
         await db.commit()
         return {"failed": True, "error": attempt.error_message}
 
-    # 上游 ID 立即落库（下载中断后只拉成片，不重新生成）
+    # 上游 ID 立即落库（下载中断后只拉成片，不重新生成）；
+    # 任务行同步推进到 awaiting_poll（否则调度器视角永远停留在 running，
+    # 租约到期被孤儿回收后无限重跑恢复路径——P1-4）
     attempt.provider_prediction_id = prediction_id
     attempt.status = "PROVIDER_RUNNING"
-    task.provider_task_id = prediction_id
-    await db.commit()
+    await _transition_task_to_poll(db, task, prediction_id)
     return {"awaiting_poll": True}
 
 

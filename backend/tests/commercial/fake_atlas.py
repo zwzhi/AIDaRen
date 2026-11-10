@@ -43,6 +43,7 @@ def build_fake_atlas_app(*, clip_path: Path | None = None) -> FastAPI:
     app.state.prediction_script: dict[str, list[dict]] = {}
     app.state.quote_response = {"amount": 0.135, "currency": "USD", "quote_id": "fq-1"}
     app.state.generate_response: dict | None = None  # None=正常返回 id
+    app.state.prediction_status = 200  # 非 200 时模拟上游限流等错误状态
     app.state.files: dict[str, bytes] = {}
 
     @app.post("/api/v1/model/calculate")
@@ -68,6 +69,9 @@ def build_fake_atlas_app(*, clip_path: Path | None = None) -> FastAPI:
     @app.get("/api/v1/model/prediction/{prediction_id}")
     async def prediction(prediction_id: str):
         app.state.requests.append(("prediction", {"id": prediction_id}))
+        if app.state.prediction_status != 200:
+            return JSONResponse({"error": {"message": "rate limited"}},
+                                status_code=app.state.prediction_status)
         script = app.state.prediction_script.get(prediction_id)
         if script:
             body = script.pop(0)
@@ -79,7 +83,8 @@ def build_fake_atlas_app(*, clip_path: Path | None = None) -> FastAPI:
     @app.get("/files/{name}")
     async def files(name: str):
         data = app.state.files.get(name)
-        if data is None and clip_path is not None and clip_path.is_file():
+        if data is None and clip_path is not None and name == clip_path.name \
+                and clip_path.is_file():
             data = clip_path.read_bytes()
         if data is None:
             return JSONResponse({"error": "not found"}, status_code=404)
@@ -112,10 +117,14 @@ async def fake_atlas(tmp_path):
         thread.join(timeout=10)
 
 
-def complete_prediction_body(name: str = "fake-output.mp4", base_url: str = "",
+def complete_prediction_body(name: str = "fake-output.mp4",
                              *, amount: float | None = 0.14) -> dict:
-    """构造一次“已完成”的 prediction 响应体（含输出 URL 与可核实费用）。"""
-    body: dict = {"status": "completed", "outputs": [f"{base_url}/files/{name}"]}
+    """构造一次“已完成”的 prediction 响应体（含输出 URL 与可核实费用）。
+
+    输出地址使用 https 形态（与真实上游一致；适配器只接受 https）。
+    测试注入的下载垫片会把该地址映射回本地 Fake Atlas。
+    """
+    body: dict = {"status": "completed", "outputs": [f"https://fake-atlas.invalid/files/{name}"]}
     if amount is not None:
         body["cost"] = {"amount": amount, "currency": "USD"}
     return body

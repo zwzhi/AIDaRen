@@ -518,14 +518,18 @@ async def generate_unit(
         raise HTTPException(status_code=code_map.get(exc.code, 400), detail=exc.message) from exc
     await db.commit()
 
-    # 建 TaskRun（commercial/video_generate）走统一任务平台
+    # 建 TaskRun（commercial/video_generate）走统一任务平台；
+    # next_action_at 必须置为当前时间——调度器只认领"非空且已到期"的
+    # pending 任务（scheduler._claim_queue），留 None 将永不被执行（P1-4）
+    from datetime import UTC, datetime
+
     from app.models_tasks import TaskRun
 
     task = TaskRun(
         domain="commercial", task_type="video_generate", queue_type="video",
         status="pending", requested_by=user.id,
         payload={"attempt_id": approval.attempt_id, "unit_key": body.unit_key},
-        next_action_at=None,
+        next_action_at=datetime.now(UTC),
     )
     db.add(task)
     await db.flush()
