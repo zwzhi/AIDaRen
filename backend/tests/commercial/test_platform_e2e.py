@@ -144,6 +144,8 @@ async def world(fake_atlas, tmp_path, monkeypatch):
             "(SELECT id FROM cv_media_assets WHERE object_key LIKE :p)"), {"p": f"pe/{marker}%"})
         await db.execute(text(
             "DELETE FROM cv_cost_quotes WHERE quote_key LIKE :p"), {"p": f"pe-{marker}%"})
+        # Fake Atlas 报价号（fq-N，每次服务重启从 1000 起）也需清掉防跨运行撞键
+        await db.execute(text("DELETE FROM cv_cost_quotes WHERE quote_key LIKE 'fq-%'"))
         await db.execute(text(
             "DELETE FROM cv_media_assets WHERE object_key LIKE :p"), {"p": f"pe/{marker}%"})
         await db.execute(text(

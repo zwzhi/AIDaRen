@@ -49,7 +49,11 @@ def build_fake_atlas_app(*, clip_path: Path | None = None) -> FastAPI:
     @app.post("/api/v1/model/calculate")
     async def calculate(request: Request):
         app.state.requests.append(("calculate", await request.json()))
-        return JSONResponse(app.state.quote_response)
+        body = dict(app.state.quote_response)
+        # 报价号必须每次唯一（落库有唯一约束；固定值会在重跑时撞键）
+        body["quote_id"] = f"fq-{app.state.next_prediction_id[0]}"
+        app.state.next_prediction_id[0] += 1
+        return JSONResponse(body)
 
     @app.post("/api/v1/model/generateVideo")
     async def generate_video(request: Request):
