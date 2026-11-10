@@ -322,9 +322,16 @@ class CvGenerationAttempt(Base):
 
 
 class CvUsageLedger(Base):
-    """Atlas 原币账本（§10.4）：NUMERIC(20,8)，绝不用 float/fen。"""
+    """Atlas 原币账本（§10.4）：NUMERIC(20,8)，绝不用 float/fen。
+
+    event_key 标识业务事件（generation.pending / generation.settled），
+    (attempt_ref, event_key) 唯一 → 同一业务事件幂等入账，不重复累计。
+    """
 
     __tablename__ = "cv_usage_ledger"
+    __table_args__ = (
+        Index("uq_cv_ledger_attempt_event", "attempt_ref", "event_key", unique=True),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     attempt_ref: Mapped[str] = mapped_column(String(64), index=True)
@@ -336,6 +343,7 @@ class CvUsageLedger(Base):
     amount_cny: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     fx_rate: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     settlement_status: Mapped[str] = mapped_column(String(24), default="SETTLEMENT_PENDING", index=True)
+    event_key: Mapped[str] = mapped_column(String(64), default="")
     usage_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reconciled_manually: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -19,11 +19,32 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models_commercial import CvGenerationAttempt
 from app.services.providers.atlas.h3_reference import (
     ProviderRequestError,
+    SubmitOutcomeUnknownError,
     poll_prediction,
     submit_generation,
 )
 
 logger = logging.getLogger("app.commercial.generation")
+
+# 账本业务事件键：(attempt_ref, event_key) 唯一 → 幂等入账
+EVENT_PENDING = "generation.pending"
+EVENT_SETTLED = "generation.settled"
+
+
+async def _release_reservation_safe(db: AsyncSession, attempt: CvGenerationAttempt) -> None:
+    """释放 attempt 的预留（仅用于确未产生上游费用的失败/取消）。
+
+    结果不明（SUBMIT_UNKNOWN）与上游已执行失败绝不调用——费用未核实
+    不得当作免费释放。预留缺失时静默跳过（历史数据/测试替身）。
+    """
+    if not attempt.reservation_id:
+        return
+    from app.services.commercial.budget_service import release_reservation
+
+    try:
+        await release_reservation(db, reservation_id=attempt.reservation_id)
+    except Exception:  # noqa: BLE001 —— 释放失败不掩盖主错误
+        logger.exception("release reservation failed attempt=%s", attempt.id)
 
 _POLL_BACKOFF_SEC = 8.0
 
@@ -64,6 +85,7 @@ async def execute_generation_task(
     # 用户取消（未提交）：不调用上游，释放预留
     if getattr(task, "cancel_requested", False) and not attempt.provider_prediction_id:
         attempt.status = "CANCELLED"
+        await _release_reservation_safe(db, attempt)
         await db.commit()
         return {"cancelled": True}
 
@@ -95,6 +117,7 @@ async def execute_generation_task(
             attempt.error_code = type(exc).__name__ == "CapabilityUnverified" \
                 and "MODEL_CAPABILITY_UNVERIFIED" or "PROVIDER_NOT_CONFIGURED"
             attempt.error_message = f"执行前门禁阻断（未提交上游）: {exc}"[:500]
+            await _release_reservation_safe(db, attempt)  # 未提交 → 释放预留
             await db.commit()
             return {"failed": True, "error": attempt.error_message}
 
@@ -112,6 +135,7 @@ async def execute_generation_task(
         attempt.status = "PROVIDER_FAILED"
         attempt.error_code = "PLAN_SNAPSHOT_MISSING"
         attempt.error_message = "attempt 缺少计划参数快照，拒绝提交"
+        await _release_reservation_safe(db, attempt)  # 未提交 → 释放预留
         await db.commit()
         return {"failed": True, "error": attempt.error_message}
     try:
@@ -120,6 +144,7 @@ async def execute_generation_task(
         attempt.status = "PROVIDER_FAILED"
         attempt.error_code = exc.code
         attempt.error_message = exc.message
+        await _release_reservation_safe(db, attempt)  # 未提交 → 释放预留
         await db.commit()
         return {"failed": True, "error": exc.message}
 
@@ -146,6 +171,7 @@ async def execute_generation_task(
         attempt.status = "PROVIDER_FAILED"
         attempt.error_code = "ASSET_DELIVERY_FAILED"
         attempt.error_message = f"素材交付失败：{exc}"[:500]
+        await _release_reservation_safe(db, attempt)  # 未提交 → 释放预留
         await db.commit()
         return {"failed": True, "error": attempt.error_message}
 
@@ -163,11 +189,20 @@ async def execute_generation_task(
         attempt.error_message = f"提交结果不明：{type(exc).__name__}: {exc}"
         await db.commit()
         return {"failed": True, "error": attempt.error_message}
+    except SubmitOutcomeUnknownError as exc:
+        # HTTP 成功但无任务 ID：上游可能已创建任务 → 结果不明，冻结不重发、
+        # 不释放预留（费用未核实，不得当作免费），等待人工对账（P2-3）
+        attempt.status = "SUBMIT_UNKNOWN"
+        attempt.error_code = "SUBMIT_RESULT_UNKNOWN"
+        attempt.error_message = f"提交结果不明：{exc}"[:500]
+        await db.commit()
+        return {"failed": True, "error": attempt.error_message}
     except ProviderRequestError as exc:
-        # 明确失败（4xx/5xx 响应）：未送达或明确拒绝，可安全置失败
+        # 明确失败（4xx/5xx 响应）：未送达或明确拒绝，可安全置失败并释放预留
         attempt.status = "PROVIDER_FAILED"
         attempt.error_code = f"HTTP_{exc.status_code}"
         attempt.error_message = exc.message[:500]
+        await _release_reservation_safe(db, attempt)  # 明确未送达 → 释放预留
         await db.commit()
         return {"failed": True, "error": attempt.error_message}
 
@@ -203,6 +238,9 @@ async def poll_attempt(
         attempt.error_code = "missing_provider_task_id"
         await db.commit()
         return {"failed": True}
+    if attempt.status == "GENERATED":
+        # 已完成短路（P1-2）：重放/多任务重复轮询不重复下载、不重复入账
+        return {"generated": True, "output_key": attempt.output_asset_key, "already": True}
 
     # Mock 预测：本机测试片段直接归档（零网络），行为与真实轮询一致
     from app.services.commercial import mock_provider
@@ -213,6 +251,8 @@ async def poll_attempt(
         attempt.output_asset_key = clip.name
         attempt.status = "GENERATED"
         await _record_pending_usage(db, attempt)
+        # Mock 价为确定性本地价（可核实）→ 生成即结算，池账目闭环
+        await _settle_generation(db, attempt, mock_price=True)
         await db.commit()
         return {"generated": True, "output_key": attempt.output_asset_key, "mock": True}
 
@@ -247,14 +287,21 @@ async def poll_attempt(
     attempt.output_urls_snapshot = list(result.output_urls)  # type: ignore[attr-defined]
     await db.commit()
     return await _download_phase(attempt, db=db, base_url=base_url,
-                                 api_key=api_key, transport=transport)
+                                 api_key=api_key, transport=transport,
+                                 cost_amount=result.cost_amount,
+                                 cost_currency=result.cost_currency)
 
 
 async def _download_phase(
     attempt: CvGenerationAttempt, *, db: AsyncSession, base_url: str,
     api_key: str, transport: httpx.AsyncBaseTransport | None,
+    cost_amount=None, cost_currency: str | None = None,
 ) -> dict[str, Any]:
-    """下载并归档输出；失败仅标记待下载，保留上游任务号（J05）。"""
+    """下载并归档输出；失败仅标记待下载，保留上游任务号（J05）。
+
+    cost_amount 为上游随任务返回的可核实费用：有则结算（预留转实扣、
+    账本行转 SETTLED 且金额=实收）；无则保持 SETTLEMENT_PENDING（估算金额）。
+    """
     from app.services.providers.atlas.media import fetch_url_to_file
 
     urls = list(getattr(attempt, "output_urls_snapshot", None) or [])
@@ -283,8 +330,11 @@ async def _download_phase(
 
     attempt.output_asset_key = str(dest.name)
     attempt.status = "GENERATED"
-    # C04：真实账单未知 → 待结算（金额来自报价快照，绝不写 0 也不虚报实结）
+    # C04：真实账单未知 → 待结算（金额来自报价快照，绝不写 0 也不虚报实结）；
+    # 上游返回可核实费用则直接结算（P1-5）
     await _record_pending_usage(db, attempt)
+    await _settle_generation(db, attempt, confirmed_amount=cost_amount,
+                             cost_currency=cost_currency)
     await db.commit()
     return {"generated": True, "output_key": attempt.output_asset_key}
 
@@ -303,7 +353,68 @@ async def _record_pending_usage(db: AsyncSession, attempt: CvGenerationAttempt) 
         settlement_status="SETTLEMENT_PENDING",
         provider_task_id=attempt.provider_prediction_id,
         usage_meta={"note": "生成完成，等待上游账单核对"},
+        event_key=EVENT_PENDING,
     )
+
+
+async def _settle_generation(
+    db: AsyncSession, attempt: CvGenerationAttempt, *,
+    confirmed_amount=None, cost_currency: str | None = None,
+    mock_price: bool = False,
+) -> None:
+    """按可核实费用结算一次生成：预留转实扣 + 账本行转 SETTLED（幂等）。
+
+    - mock_price=True：Mock 确定性本地价（报价快照金额）视作可核实费用；
+    - confirmed_amount：上游随任务返回的实收金额；
+    - 两者皆无：保持 SETTLEMENT_PENDING，预留保留（费用未核实不结算）。
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import select as _select
+
+    from app.models_commercial import CvCostQuote, CvUsageLedger
+    from app.services.commercial.budget_service import record_usage, settle_reservation
+
+    quote = await db.get(CvCostQuote, attempt.quote_id) if attempt.quote_id else None
+    if mock_price:
+        actual = quote.estimated_amount if quote else Decimal("0")
+        currency = (quote.currency if quote else "USD")
+        note = "Mock 确定性本地价，生成即结算"
+    elif confirmed_amount is not None:
+        actual = Decimal(str(confirmed_amount))
+        currency = cost_currency or "USD"
+        note = "上游随任务返回可核实费用"
+    else:
+        return  # 无可核实账单 → 保持待结算
+    if attempt.reservation_id:
+        try:
+            await settle_reservation(db, reservation_id=attempt.reservation_id,
+                                     actual_amount=actual)
+        except Exception:  # noqa: BLE001 —— 结算失败不阻断归档，留给对账
+            logger.exception("settle reservation failed attempt=%s", attempt.id)
+            return
+    # 账本行 PENDING → SETTLED（金额=实收；无行则补记）
+    row = (await db.execute(
+        _select(CvUsageLedger).where(
+            CvUsageLedger.attempt_ref == str(attempt.id),
+            CvUsageLedger.event_key == EVENT_PENDING,
+        )
+    )).scalar_one_or_none()
+    if row is not None:
+        row.amount = actual
+        row.currency = currency
+        row.settlement_status = "SETTLED"
+        row.event_key = EVENT_SETTLED
+        row.usage_meta = {"note": note,
+                          "estimated": str(quote.estimated_amount) if quote else None}
+    else:
+        await record_usage(
+            db, attempt_ref=str(attempt.id), provider="atlas",
+            model=quote.model_id if quote else "", amount=actual, currency=currency,
+            fx_rate=None, settlement_status="SETTLED",
+            provider_task_id=attempt.provider_prediction_id,
+            usage_meta={"note": note}, event_key=EVENT_SETTLED,
+        )
 
 
 async def poll_commercial_task(task_id: int, db: AsyncSession | None = None) -> None:

@@ -295,10 +295,11 @@ async def test_mock_e2e_template_reuse_two_material_sets(client, admin, db_sessi
         used = set(params.get("actor_image_asset_ids") or []) | set(params.get("product_image_asset_ids") or []) | set(params.get("voice_reference_asset_ids") or [])
         assert video_id not in used, "原片资产出现在生成参数中（INV-01 违规）"
 
-    # 费用台账：两次作品的 Mock 花费都已入账且标记待结算
+    # 费用台账：两次作品的 Mock 花费都已如实入账（P1-5 后 Mock 确定性本地价
+    # 生成即结算：pending 可为 0，但总费用绝不写 0）
     detail2 = (await client.get(f"/api/commercial/productions/{c2['production_id']}")).json()
     assert detail2["costs"]["mock"] is True
-    assert detail2["costs"]["pending_usd"] not in ("", "0")
+    assert detail2["costs"]["total_usd"] not in ("", "0", "0.00")
 
 
 @pytest.mark.asyncio

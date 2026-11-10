@@ -518,28 +518,47 @@ async def generate_unit(
         raise HTTPException(status_code=code_map.get(exc.code, 400), detail=exc.message) from exc
     await db.commit()
 
-    # 建 TaskRun（commercial/video_generate）走统一任务平台；
+    # 建/复用 TaskRun（commercial/video_generate）走统一任务平台。
+    # 幂等重放（P1-2）：返回原 attempt 的原任务，不重复建任务、不重复驱动、
+    # 不重复计费；仅在崩溃窗口（预留已落但任务未建）补建一个恢复任务。
     # next_action_at 必须置为当前时间——调度器只认领"非空且已到期"的
     # pending 任务（scheduler._claim_queue），留 None 将永不被执行（P1-4）
     from datetime import UTC, datetime
 
     from app.models_tasks import TaskRun
 
-    task = TaskRun(
-        domain="commercial", task_type="video_generate", queue_type="video",
-        status="pending", requested_by=user.id,
-        payload={"attempt_id": approval.attempt_id, "unit_key": body.unit_key},
-        next_action_at=datetime.now(UTC),
-    )
-    db.add(task)
-    await db.flush()
-    attempt = await db.get(CvGenerationAttempt, approval.attempt_id)
-    if attempt is not None:
-        attempt.status = "QUEUED"
-    await db.commit()
+    async def _find_existing_task(attempt_id: int) -> TaskRun | None:
+        rows = (await db.execute(
+            select(TaskRun).where(
+                TaskRun.domain == "commercial",
+                TaskRun.task_type == "video_generate",
+                TaskRun.payload["attempt_id"].as_integer() == attempt_id,
+            ).order_by(TaskRun.id.desc()).limit(1)
+        )).scalars().first()
+        return rows
+
+    task_replayed = False
+    task = None
+    if approval.idempotent_replay:
+        task = await _find_existing_task(approval.attempt_id)
+        if task is not None:
+            task_replayed = True
+    if task is None:
+        task = TaskRun(
+            domain="commercial", task_type="video_generate", queue_type="video",
+            status="pending", requested_by=user.id,
+            payload={"attempt_id": approval.attempt_id, "unit_key": body.unit_key},
+            next_action_at=datetime.now(UTC),
+        )
+        db.add(task)
+        await db.flush()
+        attempt = await db.get(CvGenerationAttempt, approval.attempt_id)
+        if attempt is not None:
+            attempt.status = "QUEUED"
+        await db.commit()
 
     drove = False
-    if body.drive and mock_provider.mock_enabled():
+    if body.drive and mock_provider.mock_enabled() and not task_replayed:
         # 开发模式同步驱动（真实 handler + 真实轮询函数，仅 Mock 供应商）
         task.status = "running"
         await db.commit()
@@ -561,6 +580,7 @@ async def generate_unit(
     return {
         "attempt_id": approval.attempt_id, "task_id": task.id,
         "idempotent_replay": approval.idempotent_replay,
+        "task_replayed": task_replayed,
         "attempt_status": attempt.status if attempt else None,
         "prediction_id": attempt.provider_prediction_id if attempt else None,
         "mock": mock_provider.mock_enabled(), "drove": drove,

@@ -17,10 +17,18 @@ from app.schemas_commercial import GenerationInputError, VideoGenerationInput
 class ProviderRequestError(Exception):
     """上游错误状态/错误体；不得被当作任务成功。"""
 
-    def __init__(self, status_code: int, message: str) -> None:
+    def __init__(self, status_code: int, message: str):
         super().__init__(f"HTTP {status_code}: {message}")
         self.status_code = status_code
         self.message = message
+
+
+class SubmitOutcomeUnknownError(Exception):
+    """HTTP 成功但未返回任务 ID：上游可能已创建任务，结果不明。
+
+    语义等同 SUBMIT_UNKNOWN（冻结自动重试，人工对账），绝不能按"明确失败"
+    处理后允许重发——那会造成双重付费（P2-3）。
+    """
 
 
 @dataclass(frozen=True)
@@ -135,6 +143,29 @@ class ProviderTaskResult:
     output_urls: tuple[str, ...] = ()
     error: str | None = None
     raw_status: str = ""
+    # 上游随任务返回的可核实费用（prediction 响应 cost 字段）；
+    # 无则 None → 保持待结算，绝不把估算写成实收
+    cost_amount: "Decimal | None" = None
+    cost_currency: str | None = None
+
+
+def _parse_cost(payload: dict[str, Any]) -> tuple["Decimal | None", str | None]:
+    """解析上游费用字段：cost={"amount","currency"} 或 usage_cost。"""
+    from decimal import Decimal as _D
+    from decimal import InvalidOperation as _IO
+
+    cost = payload.get("cost")
+    if isinstance(cost, dict) and cost.get("amount") is not None:
+        try:
+            return _D(str(cost["amount"])), str(cost.get("currency") or "USD").upper()
+        except _IO:
+            return None, None
+    if payload.get("usage_cost") is not None:
+        try:
+            return _D(str(payload["usage_cost"])), "USD"
+        except _IO:
+            return None, None
+    return None, None
 
 
 def map_prediction(payload: dict[str, Any]) -> ProviderTaskResult:
@@ -157,16 +188,20 @@ def map_prediction(payload: dict[str, Any]) -> ProviderTaskResult:
         )
     raw_status = str(payload.get("status") or "").strip().lower()
     if raw_status in {"succeeded", "success", "completed"}:
+        cost_amount, cost_currency = _parse_cost(payload)
         outputs = payload.get("outputs") or payload.get("output") or []
         if isinstance(outputs, str):
             outputs = [outputs]
         urls = tuple(str(u) for u in outputs if str(u).startswith("https://"))
         if not urls:
             # 成功但无输出 URL：仍算 succeeded，由下载阶段处理（OUTPUT_PENDING_DOWNLOAD）
-            return ProviderTaskResult(prediction_id=str(payload.get("id") or ""), status="succeeded", raw_status=raw_status)
+            return ProviderTaskResult(prediction_id=str(payload.get("id") or ""),
+                                      status="succeeded", raw_status=raw_status,
+                                      cost_amount=cost_amount, cost_currency=cost_currency)
         return ProviderTaskResult(
             prediction_id=str(payload.get("id") or ""), status="succeeded",
             output_urls=urls, raw_status=raw_status,
+            cost_amount=cost_amount, cost_currency=cost_currency,
         )
     if raw_status in {"failed", "error", "canceled", "cancelled"}:
         return ProviderTaskResult(
@@ -199,7 +234,10 @@ async def submit_generation(
             body = body["data"]  # 官方文档 data 包装（2026-11-10 核实）
         prediction_id = str(body.get("id") or body.get("prediction_id") or "").strip()
         if not prediction_id:
-            raise ProviderRequestError(resp.status_code, "上游未返回任务 ID（SUBMIT_RESULT_UNKNOWN 需人工对账）")
+            # HTTP 成功但无任务 ID：上游可能已创建任务（结果不明），
+            # 必须按 SUBMIT_UNKNOWN 冻结，不得当明确失败处理（P2-3）
+            raise SubmitOutcomeUnknownError(
+                "上游返回成功但未携带任务 ID（SUBMIT_RESULT_UNKNOWN 需人工对账）")
         return prediction_id
 
 

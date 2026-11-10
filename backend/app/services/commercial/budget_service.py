@@ -17,6 +17,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models_commercial import (
@@ -219,6 +220,13 @@ async def approve_and_reserve(
     """
     payload_hash = compute_request_fingerprint(params)
 
+    def _replay(existing: CvGenerationAttempt) -> ApprovalResult:
+        return ApprovalResult(
+            attempt_id=existing.id,
+            reservation_id=existing.reservation_id,
+            idempotent_replay=True,
+        )
+
     existing = (await db.execute(
         select(CvGenerationAttempt).where(
             CvGenerationAttempt.client_request_id == client_request_id
@@ -229,11 +237,7 @@ async def approve_and_reserve(
             raise IdempotencyConflict(
                 f"client_request_id={client_request_id} 已绑定其他参数（J01），请使用新的请求 ID"
             )
-        return ApprovalResult(
-            attempt_id=existing.id,
-            reservation_id=existing.reservation_id,
-            idempotent_replay=True,
-        )
+        return _replay(existing)
 
     _ensure_not_expired(quote)
     if quote.request_fingerprint != payload_hash:
@@ -262,19 +266,45 @@ async def approve_and_reserve(
         status="APPROVED", created_by=created_by,
     )
     db.add(attempt)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # 并发同 client_request_id：唯一约束使后到者失败 → 回滚为重放语义
+        await db.rollback()
+        winner = (await db.execute(
+            select(CvGenerationAttempt).where(
+                CvGenerationAttempt.client_request_id == client_request_id
+            )
+        )).scalar_one_or_none()
+        if winner is None:
+            raise
+        if winner.payload_hash != payload_hash:
+            raise IdempotencyConflict(
+                f"client_request_id={client_request_id} 已绑定其他参数（J01），请使用新的请求 ID"
+            ) from None
+        return _replay(winner)
     return ApprovalResult(attempt_id=attempt.id, reservation_id=reservation.id)
 
 
 async def settle_reservation(
     db: AsyncSession, *, reservation_id: int, actual_amount: Decimal,
-    settlement_status: str = "SETTLED",
 ) -> None:
-    """结算：预留转实扣；真实费用如实入账（可超预留，不截断）。"""
-    reservation = await db.get(CvBudgetReservation, reservation_id)
+    """结算：预留转实扣；真实费用如实入账（可超预留，不截断）。
+
+    只做状态与金额流转，不内部 commit（由调用方事务边界统一提交）；
+    池行 FOR UPDATE 防并发结算丢失更新。
+    """
+    reservation = (await db.execute(
+        select(CvBudgetReservation).where(CvBudgetReservation.id == reservation_id)
+        .with_for_update()
+    )).scalar_one_or_none()
     if reservation is None:
         raise BudgetError("RESERVATION_NOT_FOUND", "预留记录不存在")
-    pool = await db.get(CvBudgetPool, reservation.pool_id)
+    if reservation.status == "settled":
+        return  # 幂等：重复结算通知不二次生效
+    pool = (await db.execute(
+        select(CvBudgetPool).where(CvBudgetPool.id == reservation.pool_id).with_for_update()
+    )).scalar_one()
     delta = actual_amount - reservation.amount
     pool.reserved_amount = pool.reserved_amount - reservation.amount
     pool.settled_amount = pool.settled_amount + actual_amount
@@ -282,28 +312,49 @@ async def settle_reservation(
     if delta > 0:
         # 真实费用超过预留：记录并暂停新任务（§10.3）
         pool.paused = True
-    await db.commit()
+    await db.flush()
 
 
 async def release_reservation(db: AsyncSession, *, reservation_id: int) -> None:
-    """取消/失败释放预留（仅未产生上游费用时；不明提交不调用此函数）。"""
-    reservation = await db.get(CvBudgetReservation, reservation_id)
+    """取消/失败释放预留（仅未产生上游费用时；结果不明绝不调用）。
+
+    幂等：已 released/settled 的预留直接跳过；池行 FOR UPDATE。
+    """
+    reservation = (await db.execute(
+        select(CvBudgetReservation).where(CvBudgetReservation.id == reservation_id)
+        .with_for_update()
+    )).scalar_one_or_none()
     if reservation is None or reservation.status != "reserved":
         return
-    pool = await db.get(CvBudgetPool, reservation.pool_id)
+    pool = (await db.execute(
+        select(CvBudgetPool).where(CvBudgetPool.id == reservation.pool_id).with_for_update()
+    )).scalar_one()
     pool.reserved_amount = pool.reserved_amount - reservation.amount
     reservation.status = "released"
     reservation.released_at = datetime.now(UTC)
-    await db.commit()
+    await db.flush()
 
 
 async def record_usage(
     db: AsyncSession, *, attempt_ref: str, provider: str, model: str,
     amount: Decimal, currency: str, fx_rate: Decimal | None,
     settlement_status: str, provider_task_id: str | None = None,
-    usage_meta: dict | None = None,
+    usage_meta: dict | None = None, event_key: str = "",
 ) -> CvUsageLedger:
-    """原币账本入账：Decimal 精确存储；人民币折算仅展示（§10.4）。"""
+    """原币账本入账：Decimal 精确存储；人民币折算仅展示（§10.4）。
+
+    event_key 非空时按 (attempt_ref, event_key) 幂等：同一业务事件
+    已有行则直接返回既有行，不重复累计（重放/重复轮询安全）。
+    """
+    if event_key:
+        existing = (await db.execute(
+            select(CvUsageLedger).where(
+                CvUsageLedger.attempt_ref == attempt_ref,
+                CvUsageLedger.event_key == event_key,
+            )
+        )).scalar_one_or_none()
+        if existing is not None:
+            return existing
     amount_cny = None
     if fx_rate is not None:
         amount_cny = (amount * fx_rate).quantize(Decimal("0.00000001"))
@@ -312,7 +363,7 @@ async def record_usage(
         provider_task_id=provider_task_id,
         currency=currency, amount=amount, amount_cny=amount_cny,
         fx_rate=fx_rate, settlement_status=settlement_status,
-        usage_meta=usage_meta,
+        event_key=event_key, usage_meta=usage_meta,
     )
     db.add(entry)
     await db.flush()

@@ -89,6 +89,8 @@ async def platform(fake_atlas, tmp_path, monkeypatch):
     engine = create_async_engine(_TEST_DB)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        from app.commercial_schema import apply_commercial_schema_patches
+        await apply_commercial_schema_patches(conn)
     factory = async_sessionmaker(engine, expire_on_commit=False)
 
     import app.database as database_mod
