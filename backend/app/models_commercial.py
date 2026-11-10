@@ -124,3 +124,94 @@ class CvTemplateVersion(Base):
     published_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
+
+
+class CvActor(Base):
+    """我方达人档案（§6.1）。"""
+
+    __tablename__ = "cv_actors"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    name: Mapped[str] = mapped_column(String(80))
+    current_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CvActorVersion(Base):
+    """达人版本：形象图集与外观快照，作品固定引用版本。"""
+
+    __tablename__ = "cv_actor_versions"
+    __table_args__ = (
+        UniqueConstraint("actor_id", "version", name="uq_cv_actor_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("cv_actors.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="published")
+    image_asset_ids: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # int 列表
+    appearance_desc: Mapped[str] = mapped_column(Text, default="")
+    wardrobe_desc: Mapped[str] = mapped_column(Text, default="")
+    published_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CvVoiceProfile(Base):
+    """授权音色：归属达人 + 音频资产 + 授权期限（INV-02）。"""
+
+    __tablename__ = "cv_voice_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    actor_id: Mapped[int] = mapped_column(ForeignKey("cv_actors.id"), index=True)
+    audio_asset_id: Mapped[int] = mapped_column(ForeignKey("cv_media_assets.id"), index=True)
+    language: Mapped[str] = mapped_column(String(16), default="zh-CN")
+    pronunciation_notes: Mapped[str] = mapped_column(Text, default="")
+    authorized_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    status: Mapped[str] = mapped_column(String(16), default="active")  # active|revoked
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CvProduct(Base):
+    """商品档案（§6.2）。"""
+
+    __tablename__ = "cv_products"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    team_id: Mapped[int | None] = mapped_column(Integer, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    current_version: Mapped[int] = mapped_column(Integer, default=0)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class CvProductVersion(Base):
+    """商品版本：图片/规格/审核卖点/禁止表述/允许展示动作快照。"""
+
+    __tablename__ = "cv_product_versions"
+    __table_args__ = (
+        UniqueConstraint("product_id", "version", name="uq_cv_product_version"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("cv_products.id"), index=True)
+    version: Mapped[int] = mapped_column(Integer)
+    form: Mapped[str] = mapped_column(String(32), default="")  # 瓶装|贴片|盒装|...
+    specs_text: Mapped[str] = mapped_column(Text, default="")
+    image_asset_ids: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    claims: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # [{claim_id,text,approved,source}]
+    forbidden_phrases: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    allowed_actions: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    published_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
