@@ -335,3 +335,17 @@ class CvUsageLedger(Base):
     usage_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     reconciled_manually: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvReview(Base):
+    """逐镜审核记录（§15.1）：只追加、不覆盖，审核人留痕。"""
+
+    __tablename__ = "cv_reviews"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attempt_id: Mapped[int] = mapped_column(ForeignKey("cv_generation_attempts.id"), index=True)
+    dimension: Mapped[str] = mapped_column(String(32))
+    verdict: Mapped[str] = mapped_column(String(16))  # PASS|FAIL|NEEDS_REVIEW|NOT_APPLICABLE
+    reason: Mapped[str] = mapped_column(Text, default="")
+    reviewer_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
