@@ -436,6 +436,11 @@ async def _apply_schema_patches(engine_override: AsyncEngine | None = None) -> N
         from app.marketplace.locale_schema import ensure_locale_columns
         await conn.run_sync(ensure_locale_columns)
 
+        # Commercial additive columns（幂等；新库由 create_all 建全量，这里补旧库）
+        cgac = await _pg_columns(conn, "cv_generation_attempts")
+        if cgac and "output_asset_key" not in cgac:
+            await conn.execute(text("ALTER TABLE cv_generation_attempts ADD COLUMN output_asset_key VARCHAR(128)"))
+
 
 async def bootstrap_admins() -> None:
     # Promote matching emails to admin (does not create users)

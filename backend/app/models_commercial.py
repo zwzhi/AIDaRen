@@ -307,6 +307,7 @@ class CvGenerationAttempt(Base):
     # §9.2 状态
     status: Mapped[str] = mapped_column(String(32), default="APPROVED", index=True)
     provider_prediction_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    output_asset_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))

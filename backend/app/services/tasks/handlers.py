@@ -349,6 +349,27 @@ async def _run_creation_turn(task: TaskRun) -> dict[str, Any] | None:
     return await execute_creation_turn(task)
 
 
+# 执行商业域视频生成任务（提交/恢复；轮询由 poller 的 commercial 分派接管）。
+async def _run_commercial_video_generate(task: TaskRun) -> dict[str, Any] | None:
+    from app.config import get_settings
+    from app.database import AsyncSessionLocal
+    from app.services.commercial.generation import execute_generation_task
+    from app.services.providers.atlas.client import (
+        ProviderNotConfigured,
+        resolve_provider_for_commercial_task,
+    )
+
+    settings = get_settings()
+    try:
+        provider = resolve_provider_for_commercial_task()
+        base_url, api_key = provider.base_url, provider.api_key
+    except ProviderNotConfigured:
+        base_url = settings.atlas_base_url
+        api_key = (settings.atlas_api_key or "").strip()
+    async with AsyncSessionLocal() as db:
+        return await execute_generation_task(task, db=db, base_url=base_url, api_key=api_key)
+
+
 # 确保关键主键字段存在。
 def _require_int(value: int | None, field_name: str) -> int:
     if isinstance(value, int) and value > 0:
@@ -382,6 +403,7 @@ TASK_HANDLERS: dict[tuple[str, str], TaskHandler] = {
     ("kepu", "project_regen_audio"): TaskHandler("kepu", "project_regen_audio", _run_kepu_project_audio),
     ("kepu", "project_compose_only"): TaskHandler("kepu", "project_compose_only", _run_kepu_compose),
     ("tools", "mock_delay"): TaskHandler("tools", "mock_delay", _run_tools_mock_delay),
+    ("commercial", "video_generate"): TaskHandler("commercial", "video_generate", _run_commercial_video_generate),
 }
 
 

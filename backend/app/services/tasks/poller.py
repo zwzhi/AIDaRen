@@ -128,8 +128,9 @@ async def _select_and_poll_due() -> None:
     now = datetime.now(UTC)
     batch_limit = max(1, int(get_settings().task_poll_max_concurrency or 20))
     async with AsyncSessionLocal() as db:
-        # 仅 drama fragment_video 走 drama 收尾轮询；独立轻量 deferred
-        # 视频由 _poll_ephemeral_deferred_tasks 处理，误送 drama poller 会被立即判失败。
+        # 仅 drama fragment_video 走 drama 收尾轮询；commercial video_generate 走
+        # Atlas 适配器分派；独立轻量 deferred 视频由 _poll_ephemeral_deferred_tasks
+        # 处理，误送 drama poller 会被立即判失败。
         stmt = (
             select(TaskRun.id)
             .where(
@@ -138,6 +139,7 @@ async def _select_and_poll_due() -> None:
                     TaskRun.task_type == "fragment_video",
                     (TaskRun.domain == "studio") & (TaskRun.task_type == "tool_video") &
                     TaskRun.payload["run_id"].as_integer().is_not(None),
+                    (TaskRun.domain == "commercial") & (TaskRun.task_type == "video_generate"),
                 ),
                 TaskRun.next_action_at.is_not(None),
                 TaskRun.next_action_at <= now,
@@ -196,7 +198,11 @@ async def _poll_one_task(task_id: int) -> None:
             return
 
     try:
-        if task.domain == "studio" and (task.payload or {}).get("run_id"):
+        if task.domain == "commercial":
+            # 商业域走 Atlas 协议分派，绝不进入 TokenFree/drama 轮询路径
+            from app.services.commercial.generation import poll_commercial_task
+            await poll_commercial_task(task_id)
+        elif task.domain == "studio" and (task.payload or {}).get("run_id"):
             from app.services.studio_generation import poll_generation_video
             await poll_generation_video(task_id)
         else:
@@ -223,11 +229,12 @@ async def _poll_ephemeral_deferred_tasks() -> None:
     async with AsyncSessionLocal() as db:
         # next_action_at 为 NULL（尚未安排退避）视为到期；否则只查到期任务，
         # 避免每个轮询周期都对全部在途任务请求上游。
+        # commercial 域由上方 Atlas 分派接管，此处必须排除，防止误送 TokenFree 协议轮询。
         stmt = (
             select(TaskRun)
             .where(
                 TaskRun.status == "awaiting_poll",
-                TaskRun.domain.not_in(["drama", "kepu"]),
+                TaskRun.domain.not_in(["drama", "kepu", "commercial"]),
                 TaskRun.provider_task_id.is_not(None),
                 TaskRun.billing_status == "frozen",
                 or_(TaskRun.domain != "studio", TaskRun.task_type != "tool_video",
