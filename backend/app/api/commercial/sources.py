@@ -201,7 +201,7 @@ async def analyze_source(
     if source is None:
         raise HTTPException(status_code=404, detail="参考视频不存在")
     settings = _gs()
-    model_id = (settings.gemini_analysis_model_id or "gemini-3-flash-preview")
+    model_id = (settings.gemini_analysis_model_id or "").strip()
     run = await get_or_create_analysis_run(
         db, source=source, model_id=model_id, requested_by=user.id,
     )
@@ -210,11 +210,17 @@ async def analyze_source(
         async def analyzer(_request):
             return mock_provider.mock_analyze_payload(source.duration_ms or 30_000)
     else:
-        if not settings.commercial_enabled or not (settings.atlas_api_key or "").strip():
-            raise HTTPException(
-                status_code=400,
-                detail="真实解析未配置（BLOCKED）：需要管理员配置密钥并验证能力后统一联调",
-            )
+        # 真实解析与报价/生成同门：付费总开关 + 双模型 ID + 已验证清单（P1-6）
+        from app.services.providers.atlas.client import (
+            CapabilityUnverified,
+            ProviderNotConfigured,
+            resolve_provider_for_commercial_task,
+        )
+
+        try:
+            resolve_provider_for_commercial_task(require_verified=True)
+        except (ProviderNotConfigured, CapabilityUnverified) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
         from app.services.providers.atlas.gemini import GeminiAnalysisRequest, analyze_video
         from app.services.commercial.storage import asset_disk_path as _adp
 

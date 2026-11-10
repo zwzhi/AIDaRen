@@ -52,12 +52,33 @@ async def execute_generation_task(
     if attempt.status == "SUBMIT_UNKNOWN":
         return {"failed": True, "error": "SUBMIT_RESULT_UNKNOWN：上游结果未明，等待人工对账"}
 
-    # 恢复路径：已有上游任务号 → 只查询
+    # 恢复路径：已有上游任务号 → 只查询（查询/下载不受新任务付费门影响）
     if attempt.provider_prediction_id:
         attempt.status = "PROVIDER_RUNNING"
         task.provider_task_id = attempt.provider_prediction_id
         await db.commit()
         return {"awaiting_poll": True}
+
+    # 首次提交前的门禁重检（P1-6）：任务可能在排队期间配置降级——
+    # 付费总开关关闭/模型 ID 缺失/能力未验证时拒绝提交，绝不回落占位模型。
+    from app.services.commercial import mock_provider as _mock_provider
+
+    if not _mock_provider.mock_enabled():
+        from app.services.providers.atlas.client import (
+            CapabilityUnverified,
+            ProviderNotConfigured,
+            resolve_provider_for_commercial_task,
+        )
+
+        try:
+            resolve_provider_for_commercial_task(require_verified=True)
+        except (ProviderNotConfigured, CapabilityUnverified) as exc:
+            attempt.status = "PROVIDER_FAILED"
+            attempt.error_code = type(exc).__name__ == "CapabilityUnverified" \
+                and "MODEL_CAPABILITY_UNVERIFIED" or "PROVIDER_NOT_CONFIGURED"
+            attempt.error_message = f"执行前门禁阻断（未提交上游）: {exc}"[:500]
+            await db.commit()
+            return {"failed": True, "error": attempt.error_message}
 
     # 首次提交：从已确认计划参数快照构造完整请求（与报价同源）
     attempt.status = "SUBMITTING"

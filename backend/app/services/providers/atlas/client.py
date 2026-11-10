@@ -74,8 +74,9 @@ def resolve_provider_for_commercial_task(*, require_verified: bool = False) -> A
     """解析商业任务的 Atlas 通道配置。
 
     - 商业域未启用或缺少密钥：抛 ProviderNotConfigured（不回落 TokenFree）；
-    - require_verified=True（付费提交路径）：还要求付费开关已开、且全部已配置
-      模型都在管理员验证清单内，否则抛 CapabilityUnverified。
+    - require_verified=True（付费提交路径）：还要求付费开关已开、两个模型角色
+      （解析/生成）的精确 ID 均已配置且都在管理员验证清单内，缺一即阻断——
+      不允许"留空放行"或回落占位模型。
     """
     settings = get_settings()
     if not settings.commercial_enabled:
@@ -96,6 +97,12 @@ def resolve_provider_for_commercial_task(*, require_verified: bool = False) -> A
     if require_verified:
         if not config.paid_execution_enabled:
             raise ProviderNotConfigured("商业域付费执行未开启（commercial_paid_execution_enabled=false）")
+        required_roles = ("analysis", "video_reference")
+        missing_roles = [role for role in required_roles if role not in config.models]
+        if missing_roles:
+            raise ProviderNotConfigured(
+                "商业域模型 ID 未配置（禁止回落占位模型）: " + ", ".join(missing_roles)
+            )
         unverified = [
             f"{role}:{model}"
             for role, model in config.models.items()

@@ -30,6 +30,21 @@ _PARAMS = {
 @pytest.fixture(autouse=True)
 def _real_provider_mode(monkeypatch):
     monkeypatch.setattr("app.services.commercial.mock_provider.mock_enabled", lambda: False)
+    # 模拟"管理员已完成授权"的真实模式配置（P1-6 后执行前门禁要求全套）
+    from app import config
+
+    for name, value in {
+        "COMMERCIAL_ENABLED": "true",
+        "COMMERCIAL_PAID_EXECUTION_ENABLED": "true",
+        "ATLAS_API_KEY": "atlas-test-key-do-not-leak",
+        "GEMINI_ANALYSIS_MODEL_ID": "gemini-3-flash-preview",
+        "H3_DEVELOPER_REFERENCE_MODEL_ID": "minimax-h3-developer-reference",
+        "COMMERCIAL_VERIFIED_MODELS": "gemini-3-flash-preview,minimax-h3-developer-reference",
+    }.items():
+        monkeypatch.setenv(name, value)
+    config.get_settings.cache_clear()
+    yield
+    config.get_settings.cache_clear()
 
 
 @pytest_asyncio.fixture(autouse=True)

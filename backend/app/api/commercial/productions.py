@@ -73,18 +73,26 @@ async def _get_production(db: AsyncSession, production_id: int, user: User) -> C
 
 
 def _require_mock_or_verified() -> None:
-    """真实模式付费门槛：Mock 关闭时，未验证能力直接拒绝（不绕保护）。"""
+    """真实模式付费门槛：统一走 resolve_provider(require_verified=True)。
+
+    三层要求（任一不满足即 400，绝不回落占位模型）：
+    商业域启用 + Atlas 密钥 + 付费执行总开关开启
+    + 两个模型角色精确 ID 均已配置 + 均在管理员验证清单内。
+    Mock 模式不受影响；已提交任务的查询/下载恢复不经过此门（见 generation）。
+    """
     settings = get_settings()
     if settings.commercial_mock_mode:
         return
-    if not settings.commercial_enabled or not (settings.atlas_api_key or "").strip():
-        raise HTTPException(status_code=400, detail="商业域未配置：需要管理员配置 Atlas 密钥并验证能力后才能真实执行")
-    verified = {m.strip() for m in (settings.commercial_verified_models or "").split(",") if m.strip()}
-    models = {m.strip() for m in (
-        settings.gemini_analysis_model_id, settings.h3_developer_reference_model_id,
-    ) if m.strip()}
-    if models and not models <= verified:
-        raise HTTPException(status_code=400, detail="模型能力未通过真实契约验证，付费执行被拒绝（MODEL_CAPABILITY_UNVERIFIED）")
+    from app.services.providers.atlas.client import (
+        CapabilityUnverified,
+        ProviderNotConfigured,
+        resolve_provider_for_commercial_task,
+    )
+
+    try:
+        resolve_provider_for_commercial_task(require_verified=True)
+    except (ProviderNotConfigured, CapabilityUnverified) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 # ---------------------------------------------------------------- 模板
@@ -409,7 +417,7 @@ def _build_unit_params(production: CvProduction, unit: dict[str, Any], user_id: 
     """从已确认计划构造该单元的完整生成参数（报价与生成同源）。"""
     actor_version = None  # 延迟加载在调用处
     return {
-        "model_id": get_settings().h3_developer_reference_model_id or "minimax-h3-developer-reference",
+        "model_id": (get_settings().h3_developer_reference_model_id or "").strip(),
         "actor_image_asset_ids": [],  # 由 production 的达人版本填充（见下）
         "product_image_asset_ids": [],
         "voice_reference_asset_ids": [],
