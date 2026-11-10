@@ -265,10 +265,11 @@ async def _record_pending_usage(db: AsyncSession, attempt: CvGenerationAttempt) 
     )
 
 
-async def poll_commercial_task(task_id: int) -> None:
+async def poll_commercial_task(task_id: int, db: AsyncSession | None = None) -> None:
     """poller 分派入口：查 TaskRun → 找 attempt → poll_attempt。
 
     恢复语义与执行器约定一致：重试仅针对查询与下载，绝不重新提交。
+    db 参数供同步驱动路径/测试注入会话；生产轮询走 AsyncSessionLocal。
     """
     from app.config import get_settings
     from app.database import AsyncSessionLocal
@@ -279,41 +280,50 @@ async def poll_commercial_task(task_id: int) -> None:
     )
 
     settings = get_settings()
-    async with AsyncSessionLocal() as db:
-        task = await db.get(TaskRun, task_id)
-        if task is None or task.status != "awaiting_poll":
-            return
-        attempt_id = int((task.payload or {}).get("attempt_id") or 0)
-        attempt = await db.get(CvGenerationAttempt, attempt_id)
-        if attempt is None:
-            task.status = "failed"
-            task.error_code = "attempt_missing"
-            await db.commit()
-            return
-        try:
-            provider = resolve_provider_for_commercial_task()
-            base_url, api_key = provider.base_url, provider.api_key
-        except ProviderNotConfigured:
-            base_url = settings.atlas_base_url
-            api_key = (settings.atlas_api_key or "").strip()
-        result = await poll_attempt(attempt, db=db, base_url=base_url, api_key=api_key)
-        if result.get("retry_poll"):
-            task.next_action_at = datetime.now(UTC) + timedelta(seconds=_POLL_BACKOFF_SEC)
-            await db.commit()
-            return
-        if result.get("retry_download"):
-            task.next_action_at = datetime.now(UTC) + timedelta(seconds=_POLL_BACKOFF_SEC)
-            await db.commit()
-            return
-        if result.get("generated"):
-            task.status = "succeeded"
-            task.finished_at = datetime.now(UTC)
-            task.result_payload = result
-            await db.commit()
-            return
-        # failed
+    if db is not None:
+        await _poll_task_with_session(db, task_id, settings)
+        return
+    async with AsyncSessionLocal() as session:
+        await _poll_task_with_session(session, task_id, settings)
+
+
+async def _poll_task_with_session(db: AsyncSession, task_id: int, settings) -> None:
+    from app.models_tasks import TaskRun
+    from app.services.providers.atlas.client import (
+        ProviderNotConfigured,
+        resolve_provider_for_commercial_task,
+    )
+
+    task = await db.get(TaskRun, task_id)
+    if task is None or task.status != "awaiting_poll":
+        return
+    attempt_id = int((task.payload or {}).get("attempt_id") or 0)
+    attempt = await db.get(CvGenerationAttempt, attempt_id)
+    if attempt is None:
         task.status = "failed"
-        task.error_code = attempt.error_code or "PROVIDER_FAILED"
-        task.error_message = attempt.error_message
-        task.finished_at = datetime.now(UTC)
+        task.error_code = "attempt_missing"
         await db.commit()
+        return
+    try:
+        provider = resolve_provider_for_commercial_task()
+        base_url, api_key = provider.base_url, provider.api_key
+    except ProviderNotConfigured:
+        base_url = settings.atlas_base_url
+        api_key = (settings.atlas_api_key or "").strip()
+    result = await poll_attempt(attempt, db=db, base_url=base_url, api_key=api_key)
+    if result.get("retry_poll") or result.get("retry_download"):
+        task.next_action_at = datetime.now(UTC) + timedelta(seconds=_POLL_BACKOFF_SEC)
+        await db.commit()
+        return
+    if result.get("generated"):
+        task.status = "succeeded"
+        task.finished_at = datetime.now(UTC)
+        task.result_payload = result
+        await db.commit()
+        return
+    # failed
+    task.status = "failed"
+    task.error_code = attempt.error_code or "PROVIDER_FAILED"
+    task.error_message = attempt.error_message
+    task.finished_at = datetime.now(UTC)
+    await db.commit()

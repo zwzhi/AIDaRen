@@ -370,3 +370,46 @@ class CvProviderMediaHandle(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     source_sha256: Mapped[str] = mapped_column(String(64), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvProduction(Base):
+    """作品：模板版本 + 达人/音色/商品快照 + 制作计划（§11.1）。"""
+
+    __tablename__ = "cv_productions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    template_version_id: Mapped[int] = mapped_column(ForeignKey("cv_template_versions.id"), index=True)
+    actor_version_id: Mapped[int] = mapped_column(ForeignKey("cv_actor_versions.id"), index=True)
+    voice_profile_id: Mapped[int] = mapped_column(ForeignKey("cv_voice_profiles.id"), index=True)
+    product_version_id: Mapped[int] = mapped_column(ForeignKey("cv_product_versions.id"), index=True)
+    allow_cross_actor_voice: Mapped[bool] = mapped_column(Boolean, default=False)
+    dialogue_locked: Mapped[bool] = mapped_column(Boolean, default=False)
+    marketing_goal: Mapped[str] = mapped_column(String(255), default="")
+    locked_dialogue: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    target_duration_ms: Mapped[int] = mapped_column(Integer, default=30_000)
+    resolution_id: Mapped[str] = mapped_column(String(16), default="720p")
+    aspect_ratio: Mapped[str] = mapped_column(String(8), default="9:16")
+    status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
+    # 制作计划快照：adapted shots + generation units + adoption ranges
+    plan_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CvExport(Base):
+    """成片导出：选定 attempt 与采用区间快照 + 母版/字幕版路径。"""
+
+    __tablename__ = "cv_exports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    production_id: Mapped[int] = mapped_column(ForeignKey("cv_productions.id"), index=True)
+    master_path: Mapped[str] = mapped_column(String(512))
+    subtitled_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    total_adopt_ms: Mapped[int] = mapped_column(Integer, default=0)
+    selections_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    srt_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

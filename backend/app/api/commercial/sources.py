@@ -161,3 +161,82 @@ async def download_asset(
         media_type=asset.mime,
         filename=f"asset-{asset.id}.{asset.object_key.rsplit('.', 1)[-1]}",
     )
+
+
+@router.post("/sources/{source_id}/analyze", status_code=202, summary="创建解析任务（幂等）")
+async def analyze_source(
+    source_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """对参考视频创建解析任务；Mock 模式即时完成，真实模式要求能力验证。"""
+    from app.config import get_settings as _gs
+    from app.models_commercial import CvReferenceSource
+    from app.services.commercial import mock_provider
+    from app.services.commercial.analysis import get_or_create_analysis_run, run_analysis
+
+    source = await db.get(CvReferenceSource, source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="参考视频不存在")
+    settings = _gs()
+    model_id = (settings.gemini_analysis_model_id or "gemini-3-flash-preview")
+    run = await get_or_create_analysis_run(
+        db, source=source, model_id=model_id, requested_by=user.id,
+    )
+    mock = mock_provider.mock_enabled()
+    if mock:
+        async def analyzer(_request):
+            return mock_provider.mock_analyze_payload(source.duration_ms or 30_000)
+    else:
+        if not settings.commercial_enabled or not (settings.atlas_api_key or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="真实解析未配置（BLOCKED）：需要管理员配置密钥并验证能力后统一联调",
+            )
+        from app.services.providers.atlas.gemini import GeminiAnalysisRequest, analyze_video
+        from app.services.commercial.storage import asset_disk_path as _adp
+
+        asset = await db.get(CvMediaAsset, source.media_asset_id)
+
+        async def analyzer(_request):
+            request = GeminiAnalysisRequest(
+                source_id=source.id, model_id=model_id,
+                video_bytes=_adp(asset.object_key).read_bytes(), video_mime=asset.mime,
+                source_duration_ms=source.duration_ms or 0,
+            )
+            result = await analyze_video(
+                request, base_url=settings.atlas_base_url, api_key=settings.atlas_api_key,
+            )
+            return {
+                "duration_ms": result.duration_ms,
+                "shots": [
+                    {"shot_id": s.shot_id, "start_ms": s.start_ms, "end_ms": s.end_ms,
+                     "keyframe_hints_ms": s.keyframe_hints_ms, "observation": s.observation,
+                     "inference": s.inference, "uncertainty": s.uncertainty}
+                    for s in result.shots
+                ],
+                "transcript": result.transcript, "uncertainties": result.uncertainties,
+            }
+
+    run = await run_analysis(db, run=run, analyzer=analyzer)
+    await db.commit()
+    return {"analysis_run_id": run.id, "status": run.status, "mock": mock,
+            "error": run.error}
+
+
+@router.get("/analyses/{run_id}", summary="查询结构化解析结果")
+async def get_analysis(
+    run_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    from app.models_commercial import CvAnalysisRun
+
+    run = await db.get(CvAnalysisRun, run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="解析任务不存在")
+    return {
+        "id": run.id, "status": run.status, "model_id": run.model_id,
+        "result": run.result, "error": run.error,
+        "cache_key": run.cache_key[:16],
+    }
