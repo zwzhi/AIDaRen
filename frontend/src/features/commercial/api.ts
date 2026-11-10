@@ -54,7 +54,16 @@ export async function uploadAsset(file: File, sourceRole: string, rightsNote: st
   return (await resp.json()) as CommercialAsset
 }
 
+/** 当前生成能力档案（选项唯一来源；DRAFT 时不得声称已验证）。 */
+export type Capabilities = {
+  duration_min_ms: number; duration_max_ms: number; duration_step_ms: number
+  resolutions: string[]; aspect_ratios: string[]
+  audio_supported: boolean; voice_reference_supported: boolean
+  capability_verified: boolean; capability_version: string
+}
+
 export const commercialApi = {
+  getCapabilities: () => request<Capabilities>('/api/commercial/capabilities'),
   analyze: (sourceId: number) =>
     request<AnalysisOut & { analysis_run_id: number }>(`/api/commercial/sources/${sourceId}/analyze`, { method: 'POST' }),
   getAnalysis: (runId: number) => request<AnalysisResult>(`/api/commercial/analyses/${runId}`),
@@ -88,14 +97,17 @@ export const commercialApi = {
   plan: (productionId: number) =>
     request<{ units: Unit[]; capabilities: { duration_min_ms: number; duration_max_ms: number; capability_verified: boolean } }>(
       `/api/commercial/productions/${productionId}/plan`, { method: 'POST' }),
-  quote: (productionId: number, unitKey: string) =>
+  quote: (productionId: number, unitKey: string, dialogueOverride = '') =>
     request<{ quote_id: number; amount: string; currency: string; price_source: string; expires_at: string | null; mock: boolean }>(
-      `/api/commercial/productions/${productionId}/quote`, { method: 'POST', body: JSON.stringify({ unit_key: unitKey }) }),
-  generate: (productionId: number, unitKey: string, quoteId: number, clientRequestId: string) =>
-    request<{ attempt_id: number; attempt_status: string; prediction_id: string | null; idempotent_replay: boolean; mock: boolean }>(
+      `/api/commercial/productions/${productionId}/quote`, {
+        method: 'POST',
+        body: JSON.stringify({ unit_key: unitKey, dialogue_override: dialogueOverride }),
+      }),
+  generate: (productionId: number, unitKey: string, quoteId: number, clientRequestId: string, dialogueOverride = '') =>
+    request<{ attempt_id: number; attempt_status: string; prediction_id: string | null; idempotent_replay: boolean; task_replayed?: boolean; mock: boolean }>(
       `/api/commercial/productions/${productionId}/generate`, {
         method: 'POST',
-        body: JSON.stringify({ unit_key: unitKey, quote_id: quoteId, client_request_id: clientRequestId, drive: true }),
+        body: JSON.stringify({ unit_key: unitKey, quote_id: quoteId, client_request_id: clientRequestId, drive: true, dialogue_override: dialogueOverride }),
       }),
   getProduction: (productionId: number) => request<ProductionDetail>(`/api/commercial/productions/${productionId}`),
   review: (attemptId: number, dimensions: Record<string, string | string[]>, speechRequired = true) =>

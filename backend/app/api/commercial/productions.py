@@ -95,6 +95,29 @@ def _require_mock_or_verified() -> None:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@router.get("/capabilities", summary="当前生成能力档案（前端选项唯一来源）")
+async def get_capabilities(
+    user: User = Depends(get_current_user),
+):
+    """分辨率/画幅/时长选项由能力档案驱动（P1-1），前端不得硬编码默认值。
+
+    capability_verified=False 表示档案仍是 DRAFT（未经真实契约验证），
+    页面不得声称真实模型能力已验证。
+    """
+    caps = DRAFT_H3_CAPABILITIES
+    return {
+        "duration_min_ms": caps.duration_min_ms,
+        "duration_max_ms": caps.duration_max_ms,
+        "duration_step_ms": caps.duration_step_ms,
+        "resolutions": sorted(caps.resolutions),
+        "aspect_ratios": sorted(caps.aspect_ratios),
+        "audio_supported": caps.audio_supported,
+        "voice_reference_supported": caps.voice_reference_supported,
+        "capability_verified": caps.capability_verified,
+        "capability_version": caps.capability_version,
+    }
+
+
 # ---------------------------------------------------------------- 模板
 class TemplateCreateBody(BaseModel):
     name: str = Field(min_length=1, max_length=120)

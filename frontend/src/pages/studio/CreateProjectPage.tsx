@@ -18,14 +18,20 @@ import './shortVideoCreate.css'
 const EXAMPLES = ['给小学生讲讲为什么天空是蓝色的', '一只胆小的小猫在雨天遇见新朋友', '用轻松的方式介绍二十四节气里的霜降']
 
 export default function CreateProjectPage() {
-  const nav = useNavigate()
   const [params] = useSearchParams()
-  const editId = Number(params.get('project')) || null
   // 商业项目：无参数的旧"新建"页不再进入旧制作流程，引导到商业模板入口；
   // 携带旧作品/模板参数的地址保持原行为（历史数据与正在进行的编辑不受影响）。
+  // 早返回必须位于所有条件 Hooks 之前（rules-of-hooks）：本组件只保留
+  // useSearchParams（无条件调用），其余 Hooks 全部移入 CreateProjectForm。
   if (COMMERCIAL_PROJECT && params.size === 0) {
     return <OldEntryGuide />
   }
+  return <CreateProjectForm params={params} />
+}
+
+function CreateProjectForm({ params }: { params: URLSearchParams }) {
+  const nav = useNavigate()
+  const editId = Number(params.get('project')) || null
   const requestedTemplate = creationTemplateId(params.get('template'))
   const requestedPipelineMode = shortVideoPipelineMode(params.get('mode'))
   const returnPath = `/studio/new${params.size ? `?${params}` : ''}`

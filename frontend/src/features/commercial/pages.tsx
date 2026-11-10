@@ -5,7 +5,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { commercialApi, uploadAsset, type ProductItem, type TemplateItem, type ActorItem, type Unit } from './api'
+import { commercialApi, uploadAsset, type Capabilities, type ProductItem, type TemplateItem, type ActorItem, type Unit } from './api'
 import { requestResponse } from '../../api/client'
 
 const MOCK_NOTE = '当前为开发模拟模式：解析/文案/报价/生成均为本地 Mock，不代表真实模型效果'
@@ -231,17 +231,19 @@ function RedoEntry({ unitKey, productionId, attempts, dialogueOverride, onDialog
   const redo = async () => {
     setBusy('quote'); setMsg('')
     try {
-      const q = await commercialApi.quote(productionId, unitKey)
+      // 修改后的台词随报价请求进入参数快照与指纹；与原计划台词不同时，
+      // 旧报价/旧批准自动失效（QUOTE_CHANGED）——重做真正携带新台词
+      const q = await commercialApi.quote(productionId, unitKey, (dialogueOverride ?? '').trim())
       setQuote({ id: q.quote_id, amount: q.amount }); setBusy(null)
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); setBusy(null) }
   }
   const confirmRedo = async () => {
     setBusy('generate')
     try {
-      // 新 client_request_id = 新 attempt（新预算）；参数若变（台词）报价指纹已失效旧批准
+      // 新 client_request_id = 新 attempt（新预算）；台词必须与报价时一致
       const reqId = `redo-${productionId}-${unitKey}-${Date.now()}`
-      const r = await commercialApi.generate(productionId, unitKey, quote!.id, reqId)
-      setMsg(`已创建新尝试 #${r.attempt_id}（状态 ${r.attempt_status}）；旧版本与费用保留`)
+      const r = await commercialApi.generate(productionId, unitKey, quote!.id, reqId, (dialogueOverride ?? '').trim())
+      setMsg(`已创建新尝试 #${r.attempt_id}（状态 ${r.attempt_status}）；台词已随请求生效，旧版本与费用保留`)
       setQuote(null); onDone()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) } finally { setBusy(null) }
   }
@@ -286,11 +288,19 @@ export function CommercialStudioPage() {
   const [quotes, setQuotes] = useState<Record<string, { id: number; amount: string }>>({})
   const [msg, setMsg] = useState('')
   const reqIdBase = useRef(`ui-${Date.now()}`)
+  // 生成选项唯一来源：服务端能力档案（不硬编码 720p/768p 等默认值）
+  const [caps, setCaps] = useState<Capabilities | null>(null)
+  const [resolution, setResolution] = useState('')
 
   useEffect(() => {
     commercialApi.listTemplates().then(r => setTemplates(r.items))
     commercialApi.listActors().then(r => setActors(r.items))
     commercialApi.listProducts().then(r => setProducts(r.items))
+    commercialApi.getCapabilities().then(c => {
+      setCaps(c)
+      // 默认优先 768p，其次档案内第一档；不在档案内的值绝不作为默认
+      setResolution(c.resolutions.includes('768p') ? '768p' : (c.resolutions[0] ?? ''))
+    }).catch(() => setCaps(null))
   }, [])
   // 刷新恢复：?production=N → 自动载入服务端已保存的计划/绑定/任务状态
   useEffect(() => {
@@ -312,11 +322,12 @@ export function CommercialStudioPage() {
   useEffect(() => { if (productionId) refreshDetail(productionId) }, [productionId, refreshDetail])
 
   const create = async () => {
+    if (!resolution) { setMsg('能力档案未加载或为空，无法创建作品'); return }
     try {
       const r = await commercialApi.createProduction({
         template_version_id: sel.template, actor_version_id: sel.actorVersion,
         voice_profile_id: sel.voice, product_version_id: sel.productVersion,
-        dialogue_locked: false, resolution_id: '720p',
+        dialogue_locked: false, resolution_id: resolution,
       })
       setProductionId(r.production_id); setMsg('')
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
@@ -370,8 +381,27 @@ export function CommercialStudioPage() {
             <option value="" disabled>选择商品</option>
             {products.map(p => <option key={p.id} value={p.current_version}>{p.name}（最新版）</option>)}
           </select>
-          <button style={btn} disabled={!sel.template || !sel.actorVersion || !sel.voice || !sel.productVersion} onClick={create}>创建作品</button>
+          <select style={input} value={resolution} onChange={e => setResolution(e.target.value)}
+            disabled={!caps || caps.resolutions.length === 0} aria-label="生成分辨率">
+            <option value="" disabled>{caps ? '选择分辨率' : '能力档案加载中…'}</option>
+            {(caps?.resolutions ?? []).map(r => <option key={r} value={r}>{r}</option>)}
+          </select>
+          <button style={btn} disabled={!sel.template || !sel.actorVersion || !sel.voice || !sel.productVersion || !resolution} onClick={create}>创建作品</button>
         </div>
+        {caps && !caps.capability_verified && (
+          <p style={{ fontSize: 12, color: '#8a6d3b', marginTop: 6 }}>
+            能力档案为草案（DRAFT {caps.capability_version}）：分辨率 {caps.resolutions.join('/')}、
+            时长 {caps.duration_min_ms / 1000}-{caps.duration_max_ms / 1000}s 来自公开文档，
+            真实契约与模型效果尚未验证，不代表已具备真实生成能力。
+          </p>
+        )}
+        {detail && caps && !caps.resolutions.includes(detail.resolution_id) && (
+          <p style={{ color: '#b00', background: '#fdecea', padding: '6px 10px', borderRadius: 6, fontSize: 13 }}>
+            作品 #{detail.id} 的分辨率 {detail.resolution_id} 已不在当前能力档案
+            （{caps.resolutions.join('/')}）内：报价会被服务端拒绝。
+            请使用当前支持的分辨率重建作品，或等待能力档案更新后重试。
+          </p>
+        )}
         {msg && <p style={{ color: '#b00' }}>{msg}</p>}
       </Section>
       {productionId && detail && (

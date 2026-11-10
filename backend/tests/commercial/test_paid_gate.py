@@ -318,3 +318,15 @@ async def test_mock_mode_quote_still_works(client, db_session, admin, monkeypatc
     resp = await client.post(f"/api/commercial/productions/{pid}/quote", json={"unit_key": "U001"})
     assert resp.status_code == 200, resp.text
     assert resp.json()["mock"] is True
+
+
+@pytest.mark.asyncio
+async def test_capabilities_endpoint_drives_options(client, monkeypatch):
+    """P1-1：能力档案端点返回当前档案（前端选项唯一来源，含 DRAFT 标注）。"""
+    _set_commercial(monkeypatch, mock=True)
+    resp = await client.get("/api/commercial/capabilities")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["capability_verified"] is False, "DRAFT 档案不得声称已验证"
+    assert "768p" in body["resolutions"] and "720p" not in body["resolutions"]
+    assert body["duration_min_ms"] == 5000 and body["duration_max_ms"] == 15000
