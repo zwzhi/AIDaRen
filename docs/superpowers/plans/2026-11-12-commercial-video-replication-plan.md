@@ -199,22 +199,29 @@
 - Modify: `backend/app/services/commercial/generation_request.py`
 - Modify: `backend/app/services/commercial/timeline.py`
 - Modify: `backend/app/services/commercial/generation.py`
+- Create: `backend/app/services/commercial/segment_planner.py`
 - Create: `backend/tests/commercial/test_replication_preview.py`
 
 **Interfaces:**
 - `H3VideoAdapter.probe_capabilities() -> H3Capabilities`。
 - `H3VideoAdapter.submit_preview(frozen_revision) -> TaskRun`。
+- `plan_long_video(shot_graph, source_duration_ms, master_voice_track_id, max_segment_duration_ms=15000, overlap_ms=0) -> dict`。
 - `TimelineCompiler.compose_preview(segment_outputs, timeline) -> CvExport`。
 
 - [ ] **Step 1: 写失败测试**
   - 预览默认 9:16 和最低已验证分辨率。
   - 单次请求超过 9 张参考图被拒绝或按连续片段拆分。
+  - 60 秒视频按镜头切点或动作中性点拆为 `request_duration_ms <= 15000` 的 segments。
+  - 超过 15 秒且没有安全切点时返回 `needs_human_review`，保留 segment 边界建议。
+  - 全片只生成一个 master voice track，segment 只引用音频时间范围。
   - H3 只接收 approved anchor set、approved script、approved voice 和 approved subtitles。
   - 同一 frozen revision 重复提交不重复创建任务。
 - [ ] **Step 2: 运行测试确认失败**
   - Run: `backend\.venv\Scripts\python.exe -m pytest tests/commercial/test_replication_preview.py -q`
 - [ ] **Step 3: 实现 Mock/沙箱 H3 适配器、分批策略和时间轴**
-  - 第一版每个镜头或连续短片段使用 1～3 张锚帧。
+  - 先运行 `plan_render_segments`，优先在镜头切点和动作中性点切分，记录 overlap 和 continuity anchor。
+  - 第一版每个 segment 使用 1～3 张锚帧，超过 9 张按连续片段生成，不重新编写全片台词。
+  - segment 音频范围来自 master voice track，外部时间轴负责去重、拼接和淡入淡出。
   - 外部时间轴负责顺序、字幕、声音和片段拼接。
   - 真实 H3 字段只有 probe 通过后才能启用。
 - [ ] **Step 4: 运行测试确认通过**

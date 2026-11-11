@@ -39,6 +39,7 @@
 - Image2.6 图生图达人和商品替换
 - 人工确认后的锚帧冻结
 - 授权达人音色生成或 H3 音频参考
+- 15 秒上限下的长视频分段规划和连续性锚点
 - H3 低清预览和正式渲染
 - 脚本、锚帧、声音和生成任务版本化
 - 商品、声音、画面和合规质检
@@ -66,6 +67,7 @@
 ### 3.2 输出约束
 
 - 预览默认使用 9:16、最低已验证分辨率，当前候选为 480P。
+- 单次 H3 生成段的请求时长不得超过 15 秒。60 秒、120 秒等长片必须先生成外部 render plan。
 - 正式输出复用冻结版本，可选择 480P、768P 或 2K 等已验证分辨率。
 - H3 单次请求最多 9 张参考图。超过限制时按连续镜头片段分批生成，由外部时间轴合成。
 - 生成时序由系统的 shot graph、shot_key、序号和时间戳控制，不依赖 H3 自行推断多图顺序。
@@ -109,6 +111,8 @@ Shot Graph 与商品露出判断
 Gemini 生成结构化脚本
   ↓
 用户确认脚本、商品映射和声音
+  ↓
+按镜头和动作边界规划 ≤15 秒 render segments
   ↓
 抽取镜头锚帧候选
   ↓
@@ -175,6 +179,8 @@ H3 生成 9:16 低清预览
 
 - H3 请求最多 9 张参考图。
 - 未验证多图顺序时，按单镜头或连续片段调用。
+- 每个 segment 只能消费自己的 1～3 张锚帧、片段时间轴和连续性锚点。
+- H3 生成不重新编写全片台词。全片脚本和 master voice track 由外部时间轴统一管理。
 - 真实契约未验证时只能使用 Mock 或 Fixture。
 - 预览和正式输出必须引用同一份冻结脚本、Anchor Set、声音和商品版本。
 
@@ -320,7 +326,47 @@ H3 生成 9:16 低清预览
 - `approved_by`
 - `approved_at`
 
-### 7.7 现有表扩展
+### 7.7 `cv_render_batches` 和 `cv_render_segments`
+
+`cv_render_batches` 是一次预览或正式渲染的全片协调对象。`cv_render_segments` 是单次 H3 调用对应的可恢复片段。
+
+`cv_render_batches` 核心字段：
+
+- `replication_project_id`
+- `script_version_id`
+- `anchor_set_id`
+- `voice_render_id`
+- `subtitle_version_id`
+- `stage`：`preview` / `final`
+- `status`
+- `master_voice_track_id`
+- `total_duration_ms`
+- `frozen_version_hash`
+- `expected_version`
+
+`cv_render_segments` 核心字段：
+
+- `render_batch_id`
+- `segment_index`
+- `shot_keys_json`
+- `source_start_ms`
+- `source_end_ms`
+- `overlap_ms`
+- `continuity_anchor_time_ms`
+- `request_duration_ms`
+- `anchor_frame_ids_json`
+- `segment_audio_start_ms`
+- `segment_audio_end_ms`
+- `provider_task_id`
+- `status`
+- `output_asset_id`
+- `error_code`
+
+单个 segment 的 `request_duration_ms` 必须小于等于 15,000。无法找到安全切点时，batch 进入 `needs_human_review`，系统暂停自动生成。
+
+全片声音使用一个 `master_voice_track_id`。各 segment 只引用该音轨的时间范围，不能为每段重新生成完整台词。
+
+### 7.8 现有表扩展
 
 - `CvGenerationAttempt` 增加 `replication_project_id`、`script_version_id`、`anchor_set_id`、`voice_render_id`、`preview_or_final`。
 - `CvCostQuote` 增加模式复杂度、锚帧数量、声音路径和人工审核预留快照。
@@ -367,6 +413,10 @@ H3 生成 9:16 低清预览
 
 ### 8.6 预览和正式生成
 
+- `POST /api/commercial/replications/{id}/render-plan`
+  - 根据 shot graph、脚本和声音时间轴生成 render batch 与 segments。
+- `GET /api/commercial/render-batches/{id}`
+  - 返回全片 segment 状态、时间范围、连续性锚点和恢复节点。
 - `POST /api/commercial/replications/{id}/quote`
 - `POST /api/commercial/replications/{id}/preview`
 - `GET /api/commercial/replications/{id}/preview`
@@ -466,6 +516,15 @@ H3 生成 9:16 低清预览
 每个阶段使用输入 hash 和幂等键缓存。阶段失败从最近成功节点恢复。H3 提交结果不明时先查询原请求，不自动重发。
 
 ## 11. 质量验收
+
+### 11.0 长视频连续性
+
+- 优先在原始镜头切点切分 segment。
+- 单镜头超过 15 秒时，在动作中性点或可解释的节奏点切分。
+- 相邻 segment 使用连续性锚点，保留人物、服装、商品、背景和镜头方向。
+- `overlap_ms` 由 render plan 明确记录，外部时间轴只保留一个连续对白时间轴。
+- 跨段人物或商品跳变、重复台词、音频重复、黑帧和断帧都阻断 final。
+- 无安全切点时进入人工规划，不自动压缩、截断或重写整段台词。
 
 ### 通用硬门槛
 
