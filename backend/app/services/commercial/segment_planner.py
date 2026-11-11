@@ -205,7 +205,6 @@ def _segments_for_shot(
 
 def plan_segments(
     shot_graph: Any,
-    *,
     source_duration_ms: int | None = None,
     max_segment_duration_ms: int = MAX_SEGMENT_DURATION_MS,
     overlap_ms: int = 0,
@@ -316,11 +315,11 @@ def plan_long_video(
 class SegmentPlanner:
     """Object facade around :func:`plan_long_video` for service consumers."""
 
-    def plan(self, shot_graph: Any, **kwargs: Any) -> dict[str, Any]:
-        return plan_long_video(shot_graph, **kwargs)
+    def plan(self, shot_graph: Any, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return plan_long_video(shot_graph, *args, **kwargs)
 
-    def segments(self, shot_graph: Any, **kwargs: Any) -> list[dict[str, Any]]:
-        return plan_segments(shot_graph, **kwargs)
+    def segments(self, shot_graph: Any, *args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        return plan_segments(shot_graph, *args, **kwargs)
 
 
 def build_unified_timeline(
