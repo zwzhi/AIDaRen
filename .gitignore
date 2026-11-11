@@ -83,3 +83,5 @@ frontend/dist/
 .cursor/
 .work/
 printfilm/
+# 演示环境（本地合成素材与运行时数据，不入库；可用 ffmpeg 按 README 再生）
+artifacts/demo_env/
