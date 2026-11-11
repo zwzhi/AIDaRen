@@ -78,6 +78,7 @@ export default function CommercialStudioPage() {
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof commercialApi.getProduction>> | null>(null)
   const [quotes, setQuotes] = useState<Record<string, { id: number; amount: string }>>({})
   const [redoDialogue, setRedoDialogue] = useState<Record<string, string>>({})
+  const [marketingGoal, setMarketingGoal] = useState('种草推荐')
   const [msg, setMsg] = useState('')
   const [msgKind, setMsgKind] = useState<'info' | 'error'>('info')
   const [caps, setCaps] = useState<Awaited<ReturnType<typeof commercialApi.getCapabilities>> | null>(null)
@@ -162,12 +163,15 @@ type ProductionItem = {
         dialogue_locked: false, resolution_id: sel.resolution,
       })
       setProductionId(r.production_id); setMsgKind('info'); setMsg('')
+      setTimeout(() => {
+        document.querySelector('#cv-section-adapt')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      }, 100)
     } catch (e) { setMsgKind('error'); setMsg(e instanceof Error ? e.message : String(e)) }
   }
   const step = async () => {
     if (!productionId) return
     try {
-      await commercialApi.adapt(productionId, '种草推荐')
+      await commercialApi.adapt(productionId, marketingGoal)
       await commercialApi.plan(productionId)
       refreshDetail(productionId); setMsg('')
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
@@ -234,7 +238,7 @@ type ProductionItem = {
       )}
 
       {productionId == null && (
-        <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
+        <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}> id="cv-section-adapt"
         <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>① 选择模板与素材</h3>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <div className="cv-field" style={{ margin: 0, minWidth: 220 }}>
@@ -290,7 +294,7 @@ type ProductionItem = {
         <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
             <h3 style={{ margin: 0, fontSize: 15 }}>② 文案与分镜（作品 #{productionId} · {detail.status}）</h3>
-            <Button variant="outline" size="sm" onClick={step}>执行文案适配 + 编译生成计划</Button>
+            <input className="cv-input" style={{ width: 180 }} placeholder="营销目标" value={marketingGoal} onChange={e => setMarketingGoal(e.target.value)} /> <Button variant="outline" size="sm" onClick={step}>执行文案适配 + 编译生成计划</Button>
           </div>
           {detail.dialogue_locked && <p className="pf-muted" style={{ fontSize: 12 }}>台词已锁定：适配只建议动作与时间。</p>}
           {detail.plan?.pending_review?.length ? (

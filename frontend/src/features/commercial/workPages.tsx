@@ -61,7 +61,19 @@ export function CommercialTasksPage() {
   const [burnMsg, setBurnMsg] = useState('')
   const [loading, setLoading] = useState(true)
 
-  const refreshList = useCallback(() => {
+    // 在途任务自动轮询（20s，只查询不重新生成）
+  const hasActiveTasks = items.some(p => !['composed', 'partial_preview'].includes(p.status))
+  useEffect(() => {
+    if (!hasActiveTasks) return
+    const timer = setInterval(() => {
+      request<{ items: ProductionItem[] }>('/api/commercial/productions')
+        .then(r => setItems(r.items))
+        .catch(() => {})
+    }, 20000)
+    return () => clearInterval(timer)
+  }, [hasActiveTasks])
+
+const refreshList = useCallback(() => {
     setLoading(true); setMsg('')
     request<{ items: ProductionItem[] }>('/api/commercial/productions')
       .then(r => setItems(r.items))
@@ -83,6 +95,15 @@ export function CommercialTasksPage() {
     }).catch(e => setMsg(String(e instanceof Error ? e.message : e)))
   }, [])
   useEffect(() => { if (activeId) openDetail(activeId) }, [activeId, openDetail])
+  const hasActiveAttempts = detail?.attempts.some(a =>
+    ['QUEUED', 'SUBMITTING', 'PROVIDER_RUNNING', 'SUBMIT_UNKNOWN'].includes(a.status))
+  useEffect(() => {
+    if (!activeId || !hasActiveAttempts) return
+    const timer = setInterval(() => {
+      commercialApi.getProduction(activeId).then(setDetail).catch(() => {})
+    }, 15000)
+    return () => clearInterval(timer)
+  }, [activeId, hasActiveAttempts])
 
   const review = async (attempt: AttemptOut, pass: boolean) => {
     const dims: Record<string, string | string[]> = {}
@@ -154,7 +175,7 @@ export function CommercialTasksPage() {
               <p className="pf-muted" style={{ fontSize: 12 }}>
                 {p.unit_count} 单元 · {p.approved_count}/{p.attempt_count} 次尝试通过审核
               </p>
-              <div className="pf-tags"><span>{p.status}</span></div>
+              <span className={`cv-status-tag ${p.status === 'composed' ? 'is-composed' : 'is-pending'}`}>{p.status === 'composed' ? '已合成' : p.status === 'planned' ? '已计划' : p.status === 'adapted' ? '已适配' : p.status === 'partial_preview' ? '部分预览' : p.status}</span>
             </div>
           </button>
         ))}
@@ -174,7 +195,7 @@ export function CommercialTasksPage() {
                 <strong>#{a.id}</strong>
                 {a.unit_key && <span className="pf-tags"><span>{a.unit_key}</span></span>}
                 {a.attempt_no != null && a.attempt_no > 1 && <span className="pf-tags"><span>第{a.attempt_no}次</span></span>}
-                <span className="pf-tags"><span>{a.status}</span></span>
+                <span className={`cv-status-tag ${a.status === 'REVIEW_APPROVED' ? 'is-approved' : a.status === 'REVIEW_REJECTED' ? 'is-rejected' : a.status === 'GENERATED' ? 'is-generated' : 'is-pending'}`}>{a.status === 'REVIEW_APPROVED' ? '已通过' : a.status === 'REVIEW_REJECTED' ? '已驳回' : a.status === 'GENERATED' ? '已生成' : a.status === 'PROVIDER_RUNNING' ? '生成中' : a.status === 'QUEUED' ? '排队中' : a.status}</span>
                 <span className="pf-muted" style={{ fontSize: 12 }}>{a.prediction_id ?? ''}</span>
                 <span style={{ flex: 1 }} />
                 {a.status === 'GENERATED' && (
