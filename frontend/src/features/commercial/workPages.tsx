@@ -51,6 +51,7 @@ export function CommercialTasksPage() {
   const [detail, setDetail] = useState<ProductionDetail | null>(null)
   const [activeId, setActiveId] = useState<number | null>(null)
   const [msg, setMsg] = useState('')
+  const [composing, setComposing] = useState(false)
   const [exportId, setExportId] = useState<number | null>(null)
   const [exportKind, setExportKind] = useState<string>('master')
   const [subtitled, setSubtitled] = useState(false)
@@ -92,7 +93,8 @@ export function CommercialTasksPage() {
   }
 
   const compose = async () => {
-    if (!detail) return
+    if (!detail || composing) return
+    setComposing(true)
     const units = detail.plan?.units || []
     const selections: { attempt_id: number; ranges: number[][] }[] = []
     const missing: string[] = []
@@ -113,6 +115,7 @@ export function CommercialTasksPage() {
       setMsg(`合成完成：导出 #${r.export_id}（${r.kind === 'partial_preview' ? '部分预览' : '完整成片'}，${(r.total_adopt_ms / 1000).toFixed(1)}s）`)
       openDetail(activeId!)
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
+    finally { setComposing(false) }
   }
 
   const download = async (variant: 'master' | 'subtitled') => {
@@ -200,7 +203,12 @@ export function CommercialTasksPage() {
             重做请到<a href={`/commercial/studio?production=${detail.id}`}>制作工作台</a>对应单元操作（新报价 → 新尝试，旧版本与费用保留）。
           </p>
           {detail.attempts.some(a => a.status === 'REVIEW_APPROVED') && (
-            <Button variant="lime" onClick={compose}>合成完整成片（FFmpeg）并生成字幕草稿</Button>
+            <div>
+              <Button variant="lime" disabled={composing} onClick={compose}>
+                {composing ? '合成中…（FFmpeg 拼接中，请稍候）' : '合成完整成片（FFmpeg）并生成字幕草稿'}
+              </Button>
+              {msg && <p style={{ fontSize: 13, margin: '8px 0 0', color: msg.includes('合成完成') ? 'var(--pf-ink)' : '#b26a00' }}>{msg}</p>}
+            </div>
           )}
           {exportId != null && (
             <div style={{ marginTop: 14, borderTop: '1px solid var(--pf-line)', paddingTop: 12 }}>
