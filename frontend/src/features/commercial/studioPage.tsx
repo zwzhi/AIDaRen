@@ -10,6 +10,7 @@ import CommercialLayout, { CommercialPageHead, MockModeNote } from './Commercial
 import {
   commercialApi, type ActorItem, type ProductItem, type TemplateItem,
 } from './api'
+import { request } from './templatesApi'
 import './commercial.css'
 
 const sec = (ms: number) => `${(ms / 1000).toFixed(1)}s`
@@ -86,6 +87,12 @@ export default function CommercialStudioPage() {
   const reqIdBase = useRef(`ui-${Date.now()}`)
   const restoredRef = useRef(false)
 
+type ProductionItem = {
+  id: number; status: string; template_name: string
+  unit_count: number; attempt_count: number; approved_count: number
+  created_at: string | null
+}
+
   const setProductionId = (pid: number | null) => {
     setProductionIdState(pid)
     if (pid == null) setSearchParams({}, { replace: true })
@@ -112,6 +119,14 @@ export default function CommercialStudioPage() {
     if (fromUrl > 0) { restoredRef.current = true; setProductionIdState(fromUrl) }
     else if (tplFromUrl > 0) { restoredRef.current = true; setSel(s => ({ ...s, template: tplFromUrl })) }
   }, [searchParams])
+  // 未选中作品时提供"继续最近的作品"入口（避免只能新建、找不到历史）
+  const [recent, setRecent] = useState<ProductionItem[]>([])
+  useEffect(() => {
+    if (productionId != null) return
+    request<{ items: ProductionItem[] }>('/api/commercial/productions')
+      .then(r => setRecent(r.items.slice(0, 6)))
+      .catch(() => setRecent([]))
+  }, [productionId])
   useEffect(() => {
     if (!hasUnsavedRedo) return
     const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
@@ -183,7 +198,38 @@ export default function CommercialStudioPage() {
       <MockModeNote />
 
       {/* ① 选模板与素材 */}
-      <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
+      {productionId != null ? (
+        <p className="pf-muted" style={{ fontSize: 13, margin: '0 0 12px' }}>
+          正在编辑作品 #{productionId}（②③区）。要新建其它作品，
+          <a href="/commercial/studio" style={{ color: 'var(--pf-ink)' }}>点这里回到空白工作台</a>。
+        </p>
+      ) : (
+        <>
+          {recent.length > 0 && (
+            <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
+              <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>继续最近的作品</h3>
+              <div style={{ display: 'grid', gap: 8 }}>
+                {recent.map(item => (
+                  <button key={item.id} type="button" className="cv-shot"
+                    style={{ padding: '10px 12px', cursor: 'pointer', textAlign: 'left', font: 'inherit' }}
+                    onClick={() => setProductionId(item.id)}>
+                    <strong>#{item.id} · {item.template_name}</strong>
+                    <span className="pf-muted" style={{ fontSize: 12, marginLeft: 10 }}>
+                      {item.status} · {item.approved_count}/{item.attempt_count} 次尝试通过审核
+                      {item.created_at ? ` · ${item.created_at.slice(0, 16).replace('T', ' ')}` : ''}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              <p className="pf-muted" style={{ fontSize: 12, marginTop: 8 }}>或用下方①区新建作品。</p>
+            </div>
+          )}
+          <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
+          </div>
+        </>
+      )}
+
+<div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
         <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>① 选择模板与素材</h3>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <div className="cv-field" style={{ margin: 0, minWidth: 220 }}>
