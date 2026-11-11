@@ -34,6 +34,10 @@ class SubmitOutcomeUnknownError(Exception):
 class PreviewInputError(ValueError):
     """预览输入不满足冻结版本或 H3 参考图契约。"""
 
+    def __init__(self, message: str, code: str = "PREVIEW_INPUT_INVALID") -> None:
+        super().__init__(message)
+        self.code = code
+
 
 @dataclass
 class PreviewTask:
@@ -79,6 +83,14 @@ class H3Capabilities:
                  "540p": 540, "576p": 576, "720p": 720, "768p": 768,
                  "1080p": 1080, "2k": 2048}
         return min(self.resolutions, key=lambda value: order.get(value.lower(), 10_000))
+
+    @property
+    def preview_resolution(self) -> str:
+        return self.preview_default_resolution
+
+    @property
+    def max_refs(self) -> int:
+        return self.max_reference_images
 
 
 # 能力档案（依据 2026-11-10 Atlas 官方模型页公开信息更新；capability_verified 仍为 False
@@ -294,6 +306,7 @@ def build_h3_request(
             })
         payload["reference_images"] = references
         payload["anchor_frame_mapping"] = mapping
+        payload["anchor_frames"] = list(mapping)
     if frozen_version_hash:
         payload["frozen_version_hash"] = str(frozen_version_hash)
     if preview:
@@ -452,6 +465,28 @@ class H3VideoAdapter:
         self.api_key = api_key
         self._tasks_by_hash: dict[str, PreviewTask] = {}
         self._tasks_by_id: dict[str, PreviewTask] = {}
+
+    @classmethod
+    def from_fixture(cls, fixture: dict[str, Any] | None = None) -> "H3VideoAdapter":
+        fixture = dict(fixture or {})
+        return cls(
+            mode="fixture",
+            capabilities=H3Capabilities(
+                duration_min_ms=int(fixture.get("duration_min_ms") or DRAFT_H3_CAPABILITIES.duration_min_ms),
+                duration_max_ms=int(fixture.get("duration_max_ms") or DRAFT_H3_CAPABILITIES.duration_max_ms),
+                duration_step_ms=int(fixture.get("duration_step_ms") or DRAFT_H3_CAPABILITIES.duration_step_ms),
+                resolutions=frozenset(fixture.get("resolutions") or DRAFT_H3_CAPABILITIES.resolutions),
+                aspect_ratios=frozenset(fixture.get("aspect_ratios") or DRAFT_H3_CAPABILITIES.aspect_ratios),
+                audio_supported=bool(fixture.get("audio_supported", True)),
+                voice_reference_supported=bool(fixture.get("voice_reference_supported", True)),
+                capability_verified=bool(fixture.get("capability_verified", False)),
+                capability_version=str(fixture.get("capability_version") or "fixture-1"),
+                preview_aspect_ratio=str(fixture.get("preview_aspect_ratio") or "9:16"),
+                preview_default_resolution=str(fixture.get("preview_default_resolution") or "480p"),
+                max_reference_images=int(fixture.get("max_reference_images") or 9),
+                max_anchor_frames_per_segment=int(fixture.get("max_anchor_frames_per_segment") or 3),
+            ),
+        )
 
     def probe_capabilities(self) -> H3Capabilities:
         return self.capabilities
