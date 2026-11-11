@@ -140,6 +140,14 @@ async def create_template(
     run = await db.get(CvAnalysisRun, body.analysis_run_id)
     if run is None or run.status != "completed":
         raise HTTPException(status_code=400, detail="解析未完成，无法建模板")
+    # 服务端校准校验：时间码必须非负且 end>start（毫秒精度，禁止静默取整/修复）
+    for shot in body.shots:
+        try:
+            s = int(shot.get("start_ms")); e = int(shot.get("end_ms"))
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 时间码必须是整数毫秒")
+        if s < 0 or e <= s:
+            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 时间范围非法：需满足 0 ≤ 开始 < 结束")
     template = CvTemplate(name=body.name, created_by=user.id)
     db.add(template)
     await db.flush()
@@ -152,6 +160,29 @@ async def create_template(
     )
     await db.commit()
     return {"template_id": template.id, "version_id": version.id, "version": 1}
+
+
+@router.get("/templates/{version_id}", summary="模板版本完整结构（校准内容重读）")
+async def get_template_version(
+    version_id: int,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    from app.models_commercial import CvTemplate, CvTemplateVersion
+
+    version = await db.get(CvTemplateVersion, version_id)
+    if version is None:
+        raise HTTPException(status_code=404, detail="模板版本不存在")
+    template = await db.get(CvTemplate, version.template_id)
+    from app.services.commercial.template_service import source_availability
+
+    return {
+        "version_id": version.id, "template_id": version.template_id,
+        "template_name": template.name if template else "",
+        "version": version.version, "status": version.status,
+        "structure": version.structure_json,
+        "source_available": await source_availability(db, version),
+        "published_at": version.published_at.isoformat() if version.published_at else None,
+    }
 
 
 @router.get("/templates", summary="模板列表（含版本）")
@@ -637,6 +668,36 @@ async def generate_unit(
         "prediction_id": attempt.provider_prediction_id if attempt else None,
         "mock": mock_provider.mock_enabled(), "drove": drove,
     }
+
+
+@router.get("/productions", summary="作品列表（任务页入口）")
+async def list_productions(
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    from app.models_commercial import CvProduct, CvProductVersion, CvTemplate, CvTemplateVersion
+
+    rows = (await db.execute(
+        select(CvProduction).order_by(CvProduction.id.desc()).limit(50)
+    )).scalars().all()
+    items = []
+    for pr in rows:
+        tv = await db.get(CvTemplateVersion, pr.template_version_id)
+        tpl = await db.get(CvTemplate, tv.template_id) if tv else None
+        attempts = (await db.execute(
+            select(CvGenerationAttempt).where(CvGenerationAttempt.production_id == pr.id)
+        )).scalars().all()
+        approved = sum(1 for a in attempts if a.status == "REVIEW_APPROVED")
+        units = (pr.plan_json or {}).get("units") or []
+        items.append({
+            "id": pr.id, "status": pr.status,
+            "template_name": tpl.name if tpl else f"模板版本#{pr.template_version_id}",
+            "resolution_id": pr.resolution_id, "aspect_ratio": pr.aspect_ratio,
+            "target_duration_ms": pr.target_duration_ms,
+            "unit_count": len(units),
+            "attempt_count": len(attempts), "approved_count": approved,
+            "created_at": pr.created_at.isoformat() if pr.created_at else None,
+        })
+    return {"items": items}
 
 
 @router.get("/productions/{production_id}", summary="作品详情（计划/单元/尝试/费用）")

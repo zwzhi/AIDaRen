@@ -1,0 +1,59 @@
+/* 商业域表单控件：统一高度/圆角/内边距/焦点，全部取自 --pf-* 变量。
+ * 适用校准表单与其余五页同款控件，替代原生窄输入观感。 */
+
+.cv-input,
+.cv-textarea {
+  width: 100%;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--pf-line);
+  border-radius: var(--pf-radius-sm);
+  background: var(--pf-card);
+  color: var(--pf-ink);
+  font: inherit;
+  font-size: 13px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.cv-textarea {
+  height: auto;
+  min-height: 64px;
+  padding: 8px 10px;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.cv-input:focus,
+.cv-textarea:focus {
+  outline: none;
+  border-color: var(--pf-lime);
+  box-shadow: 0 0 0 3px rgba(182, 255, 0, 0.25);
+}
+
+.cv-input::placeholder,
+.cv-textarea::placeholder { color: var(--pf-muted); }
+
+.cv-input.compact { height: 30px; padding: 0 8px; width: 88px; text-align: right; }
+
+/* 分镜校准：概览行 + 可展开编辑区（桌面与窄屏同构，不依赖横向宽表） */
+.cv-shot { border: 1px solid var(--pf-line); border-radius: var(--pf-radius-sm); background: var(--pf-card); }
+.cv-shot + .cv-shot { margin-top: 10px; }
+.cv-shot-head {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 12px; cursor: pointer; user-select: none;
+}
+.cv-shot-head:hover { background: rgba(182, 255, 0, 0.06); }
+.cv-shot-body { padding: 4px 12px 14px; border-top: 1px solid var(--pf-line); }
+.cv-field { display: flex; flex-direction: column; gap: 4px; margin-top: 10px; }
+.cv-field > label { font-size: 12px; color: var(--pf-muted); }
+
+/* 素材预览（鉴权 blob）：统一媒体外观 */
+.cv-media-preview { border-radius: var(--pf-radius-sm); background: #000; max-width: 100%; }
+.cv-thumb {
+  width: 72px; height: 72px; border-radius: var(--radius-sm, 10px);
+  object-fit: cover; border: 1px solid var(--pf-line); background: var(--pf-bg);
+}
+
+/* 技术详情折叠 */
+.cv-tech-note { font-size: 12px; color: var(--pf-muted); }
+.cv-tech-note summary { cursor: pointer; user-select: none; }

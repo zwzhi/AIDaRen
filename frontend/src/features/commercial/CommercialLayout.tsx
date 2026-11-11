@@ -29,11 +29,30 @@ export function CommercialPageHead({ title, desc, children }: {
   )
 }
 
-/** 模拟模式全局提示条：置底、不打断操作。 */
-export function MockModeNote() {
+/** 模拟模式提示：主文案用业务语言；技术详情可展开，不隐藏真实运行状态。 */
+export function MockModeNote({ onToggleTech, techOpen }: { onToggleTech?: () => void; techOpen?: boolean }) {
   return (
-    <p className="pf-muted" style={{ fontSize: 12, margin: '4px 0 12px' }}>
-      开发模拟模式：解析 / 文案 / 报价 / 生成为本地 Mock，费用为演示池（scope=mock），不代表真实模型效果与真实付费授权。
-    </p>
+    <div style={{ margin: '4px 0 12px' }}>
+      <p className="pf-muted" style={{ fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{
+          display: 'inline-block', padding: '1px 8px', borderRadius: 999,
+          background: '#fff3e0', color: '#b26a00', fontSize: 11,
+        }}>测试模式</span>
+        当前为本地演示：生成与费用均为模拟数据，正式效果需等真实联调。
+        {onToggleTech && (
+          <button type="button" onClick={onToggleTech}
+            style={{ border: 'none', background: 'none', color: 'var(--pf-muted)', cursor: 'pointer',
+                     fontSize: 12, textDecoration: 'underline', padding: 0 }}>
+            {techOpen ? '收起技术详情' : '技术详情'}
+          </button>
+        )}
+      </p>
+      {techOpen && (
+        <p className="pf-muted" style={{ fontSize: 12, margin: '6px 0 0', paddingLeft: 4 }}>
+          解析 / 文案 / 报价 / 生成走本地 Mock；费用记入演示预算池（scope=mock），不构成真实付费授权；
+          能力验证清单为空，真实付费执行保持关闭。
+        </p>
+      )}
+    </div>
   )
 }

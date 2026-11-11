@@ -34,8 +34,11 @@ import CanvasPage from './pages/drama/canvas/CanvasPage'
 import EpisodeStoryboardPage from './pages/drama/episodeCanvas/EpisodeStoryboardPage'
 import TeamInvitationPage from './features/teams/TeamInvitationPage'
 import RequireAuth from './pages/drama/RequireAuth'
-import { CommercialActorsPage, CommercialProductsPage, CommercialSettingsPage, CommercialStudioPage, CommercialTasksPage } from './features/commercial/pages'
+import { CommercialActorsPage, CommercialProductsPage } from './features/commercial/libraryPages'
+import { CommercialSettingsPage, CommercialTasksPage } from './features/commercial/workPages'
+import CommercialStudioPage from './features/commercial/studioPage'
 import CommercialTemplatesPage from './features/commercial/templatesPage'
+import TemplateVersionDetail from './features/commercial/templateDetail'
 import { setWorkspaceTeam, subscribeWorkspace, workspaceScope } from './features/teams/workspaceScope'
 import TeamPage from './features/teams/TeamPage'
 import { TeamPreviewProvider } from './features/teams/TeamPreviewContext'
@@ -69,6 +72,7 @@ export default function App() {
         <Route path="/tools/audio" element={<RequireAuth><GenerationPage kind="audio" /></RequireAuth>} />
         <Route path="/tasks" element={<RequireAuth><GenerationTasksPage /></RequireAuth>} />
         <Route path="/commercial/templates" element={<RequireAuth><CommercialTemplatesPage /></RequireAuth>} />
+        <Route path="/commercial/templates/:versionId" element={<RequireAuth><TemplateVersionDetail /></RequireAuth>} />
         <Route path="/commercial/actors" element={<RequireAuth><CommercialActorsPage /></RequireAuth>} />
         <Route path="/commercial/products" element={<RequireAuth><CommercialProductsPage /></RequireAuth>} />
         <Route path="/commercial/studio" element={<RequireAuth><CommercialStudioPage /></RequireAuth>} />
