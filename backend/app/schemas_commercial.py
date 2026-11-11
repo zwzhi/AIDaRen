@@ -160,15 +160,15 @@ class ShotGraphShot(BaseModel):
     start: int = Field(ge=0)
     end: int = Field(gt=0)
     purpose: str = ""
-    camera: dict[str, Any] = Field(default_factory=dict)
-    composition: dict[str, Any] = Field(default_factory=dict)
-    action: dict[str, Any] = Field(default_factory=dict)
-    emotion: dict[str, Any] = Field(default_factory=dict)
+    camera: Any = Field(default_factory=dict)
+    composition: Any = Field(default_factory=dict)
+    action: Any = Field(default_factory=dict)
+    emotion: Any = Field(default_factory=dict)
     product_presence: ProductPresence = ProductPresence.unknown
     product_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    product_evidence: list[dict[str, Any]] = Field(default_factory=list)
-    anchor_candidates: list[dict[str, Any]] = Field(default_factory=list)
-    source_span: dict[str, Any] = Field(default_factory=dict)
+    product_evidence: list[Any] = Field(default_factory=list)
+    anchor_candidates: list[Any] = Field(default_factory=list)
+    source_span: Any = Field(default_factory=dict)
     review_status: str = "approved"
 
     @model_validator(mode="before")
@@ -263,4 +263,5 @@ class ScriptBatchPayload(BaseModel):
 
     mode: str = Field(default="structural_rewrite", pattern="^(structural_rewrite|high_fidelity)$")
     scripts: list[ScriptVersionPayload] = Field(default_factory=list)
+
 

@@ -204,7 +204,18 @@ class GeminiAdapter:
 
     def adapt_scripts(self, request: GeminiScriptRequest | Mapping[str, Any]) -> list[ScriptVersionPayload]:
         if self.fixture.get("scripts"):
-            return [ScriptVersionPayload.model_validate(item) for item in self.fixture["scripts"]]
+            scripts = [ScriptVersionPayload.model_validate(item) for item in self.fixture["scripts"]]
+            catalog = list(_request_value(request, "catalog_claims", ()) or ())
+            available = {
+                str(item.get("claim_id")) for item in catalog
+                if isinstance(item, Mapping) and item.get("claim_id") and item.get("approved", True)
+            }
+            if available:
+                for script in scripts:
+                    unknown = [claim_id for claim_id in script.claim_ids if claim_id not in available]
+                    if unknown:
+                        raise AnalysisSchemaInvalid(f"fixture script claim_id 不在商品目录：{unknown}")
+            return scripts
         mode = str(_request_value(request, "mode", "structural_rewrite"))
         shot = dict(_request_value(request, "shot", {}) or {})
         catalog = list(_request_value(request, "catalog_claims", ()) or ())
@@ -237,3 +248,5 @@ def _request_value(request: Any, name: str, default: Any = None) -> Any:
     if isinstance(request, Mapping):
         return request.get(name, default)
     return getattr(request, name, default)
+
+
