@@ -14,7 +14,7 @@ from typing import Any
 
 MAX_SEGMENT_DURATION_MS = 15_000
 READY_STATUS = "ready"
-MANUAL_REVIEW_STATUS = "manual_review"
+MANUAL_REVIEW_STATUS = "needs_human_review"
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,7 @@ class SegmentPlanningResult:
     def as_dict(self) -> dict[str, Any]:
         return {
             "status": self.status,
+            "manual_review_status": self.status if self.requires_manual_review else None,
             "timeline_version": 1,
             "source_duration_ms": self.source_duration_ms,
             "total_duration_ms": self.source_duration_ms,
@@ -112,6 +113,7 @@ def _normalise_rows(shot_graph: Any) -> list[dict[str, Any]]:
                 "action_neutral_points_ms",
                 "action_neutral_ms",
                 "action_neutral_points",
+                "action_neutral_time_ms",
                 "safe_split_points_ms",
                 "safe_cut_points_ms",
                 "safe_boundaries_ms",
@@ -185,6 +187,7 @@ def _segments_for_shot(
                 "start_ms": logical_start,
                 "end_ms": logical_end,
                 "duration_ms": logical_end - logical_start,
+                "request_duration_ms": logical_end - logical_start,
                 "source_start_ms": max(0, logical_start - overlap_ms),
                 "source_end_ms": min(source_duration_ms, logical_end + overlap_ms),
                 "overlap_ms": overlap_ms,
@@ -192,6 +195,8 @@ def _segments_for_shot(
                 "split_reason": split_reason,
                 "safe_boundary": safe_boundary,
                 "requires_manual_review": not safe_boundary,
+                "segment_audio_start_ms": logical_start,
+                "segment_audio_end_ms": logical_end,
             }
         )
         cursor = boundary
@@ -259,7 +264,6 @@ def _build_timeline(
 
 def plan_long_video(
     shot_graph: Any,
-    *,
     source_duration_ms: int | None = None,
     master_voice_track_id: str | None = None,
     max_segment_duration_ms: int = MAX_SEGMENT_DURATION_MS,
@@ -326,6 +330,11 @@ def build_unified_timeline(
     return plan_long_video(shot_graph, **kwargs)
 
 
+def plan_render_segments(shot_graph: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    """Compatibility entry point for the render-batch planning stage."""
+    return plan_segments(shot_graph, **kwargs)
+
+
 __all__ = [
     "MANUAL_REVIEW_STATUS",
     "MAX_SEGMENT_DURATION_MS",
@@ -334,5 +343,6 @@ __all__ = [
     "SegmentPlanningResult",
     "build_unified_timeline",
     "plan_long_video",
+    "plan_render_segments",
     "plan_segments",
 ]

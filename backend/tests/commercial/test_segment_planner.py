@@ -44,7 +44,7 @@ def test_split_without_safe_boundary_requires_manual_review_but_stays_bounded():
         master_voice_track_id="voice-master-1",
     )
 
-    assert result["status"] == "manual_review"
+    assert result["status"] == "needs_human_review"
     assert result["requires_manual_review"] is True
     assert result["segments"][-1]["end_ms"] == 31_000
     assert all(item["duration_ms"] <= 15_000 for item in result["segments"])
@@ -67,6 +67,15 @@ def test_unified_timeline_uses_one_voice_track_without_dialogue_rewrites():
         }
         assert segment["dialogue_rewrite_allowed"] is False
         assert segment["script_source"] == "unified_timeline"
+
+
+def test_plan_long_video_accepts_documented_positional_arguments():
+    from app.services.commercial.segment_planner import plan_long_video
+
+    result = plan_long_video(_shot_graph(), 60_000, "voice-master-1")
+
+    assert result["source_duration_ms"] == 60_000
+    assert result["master_voice_track_id"] == "voice-master-1"
 
 
 def test_plan_is_reproducible_for_same_graph():
