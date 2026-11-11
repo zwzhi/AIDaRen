@@ -241,6 +241,13 @@ class CvCostQuote(Base):
     fx_rate_label: Mapped[str] = mapped_column(String(32), default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    replication_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_replication_projects.id"), nullable=True, index=True
+    )
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    max_amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
+    accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CvBudgetPool(Base):
@@ -407,6 +414,59 @@ class CvProduction(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class CvReplicationProject(Base):
+    """参考驱动复刻项目：与最终商业作品一对一。"""
+
+    __tablename__ = "cv_replication_projects"
+    __table_args__ = (
+        UniqueConstraint("production_id", name="uq_cv_replication_production"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    production_id: Mapped[int] = mapped_column(ForeignKey("cv_productions.id"), index=True)
+    mode: Mapped[str] = mapped_column(String(32), default="structural_rewrite")
+    route_reason: Mapped[str] = mapped_column(Text, default="")
+    route_confidence: Mapped[Decimal | None] = mapped_column(Numeric(8, 5), nullable=True)
+    rights_status: Mapped[str] = mapped_column(String(24), default="pending")
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    current_script_version_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_anchor_set_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    current_voice_render_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    expected_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class CvRightsEvidence(Base):
+    """权利凭证快照，支持视频、人物、声音、音乐和商品素材。"""
+
+    __tablename__ = "cv_rights_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    replication_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_replication_projects.id"), nullable=True, index=True
+    )
+    subject_type: Mapped[str] = mapped_column(String(32), index=True)
+    subject_id: Mapped[int] = mapped_column(Integer, index=True)
+    holder_name: Mapped[str] = mapped_column(String(160), default="")
+    scope: Mapped[str] = mapped_column(String(64), default="")
+    territory: Mapped[str] = mapped_column(String(64), default="")
+    channels: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    valid_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    valid_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    evidence_asset_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_media_assets.id"), nullable=True, index=True
+    )
+    verified: Mapped[bool] = mapped_column(Boolean, default=False)
+    verified_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class CvExport(Base):
