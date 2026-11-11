@@ -58,11 +58,23 @@ class TimelineCompiler:
         compiled_timeline = self.compile(timeline)
         outputs = [dict(item) for item in segment_outputs]
         by_shot = {str(item.get("shot_key") or ""): item for item in outputs}
+        by_slot = {
+            (str(item.get("shot_key") or ""), int(item["segment_index"])): item
+            for item in outputs
+            if item.get("segment_index") is not None
+        }
         segments: list[dict[str, Any]] = []
         output_keys: list[str] = []
         for row in compiled_timeline:
             shot_key = row["shot_key"]
-            output = by_shot.get(shot_key)
+            segment_index = row.get("segment_index")
+            output = (
+                by_slot.get((shot_key, int(segment_index)))
+                if segment_index is not None
+                else by_shot.get(shot_key)
+            )
+            if output is None:
+                output = by_shot.get(shot_key)
             if output is None:
                 raise ValueError(f"preview segment output missing shot_key {shot_key}")
             merged = dict(row)
@@ -84,4 +96,20 @@ class TimelineCompiler:
 def compile_timeline(segments: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """Functional convenience wrapper for callers that do not retain a compiler."""
     return TimelineCompiler().compile(segments)
+
+
+def plan_long_video_timeline(shot_graph: Any, **kwargs: Any) -> dict[str, Any]:
+    """Compile a complete source-video plan through the commercial segment planner.
+
+    Imported lazily so the existing preview compiler remains dependency-free
+    for callers that only validate already-built timeline rows.
+    """
+    from app.services.commercial.segment_planner import plan_long_video
+
+    return plan_long_video(shot_graph, **kwargs)
+
+
+def compile_unified_timeline(shot_graph: Any, **kwargs: Any) -> dict[str, Any]:
+    """Alias for the long-video planner used by timeline-oriented callers."""
+    return plan_long_video_timeline(shot_graph, **kwargs)
 

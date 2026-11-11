@@ -210,6 +210,50 @@ async def apply_commercial_schema_patches(conn) -> None:
         "CREATE INDEX IF NOT EXISTS ix_cv_subtitle_project_status ON cv_subtitle_versions(replication_project_id, status)",
     ):
         await conn.execute(text(index_sql))
+    await conn.execute(text(
+        """CREATE TABLE IF NOT EXISTS cv_render_batches (
+            id SERIAL PRIMARY KEY,
+            replication_project_id INTEGER NOT NULL REFERENCES cv_replication_projects(id),
+            script_version_id INTEGER REFERENCES cv_script_versions(id),
+            anchor_set_id INTEGER REFERENCES cv_anchor_sets(id),
+            voice_render_id INTEGER REFERENCES cv_voice_renders(id),
+            subtitle_version_id INTEGER REFERENCES cv_subtitle_versions(id),
+            stage VARCHAR(16) NOT NULL DEFAULT 'preview',
+            status VARCHAR(24) NOT NULL DEFAULT 'ready',
+            master_voice_track_id VARCHAR(128),
+            total_duration_ms INTEGER NOT NULL DEFAULT 0,
+            frozen_version_hash VARCHAR(64) NOT NULL DEFAULT '',
+            expected_version INTEGER NOT NULL DEFAULT 1,
+            created_by INTEGER NOT NULL REFERENCES users(id),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+        )"""
+    ))
+    await conn.execute(text(
+        """CREATE TABLE IF NOT EXISTS cv_render_segments (
+            id SERIAL PRIMARY KEY,
+            render_batch_id INTEGER NOT NULL REFERENCES cv_render_batches(id),
+            segment_index INTEGER NOT NULL,
+            shot_keys_json JSON,
+            source_start_ms INTEGER NOT NULL,
+            source_end_ms INTEGER NOT NULL,
+            overlap_ms INTEGER NOT NULL DEFAULT 0,
+            continuity_anchor_time_ms INTEGER NOT NULL DEFAULT 0,
+            request_duration_ms INTEGER NOT NULL,
+            anchor_frame_ids_json JSON,
+            segment_audio_start_ms INTEGER NOT NULL DEFAULT 0,
+            segment_audio_end_ms INTEGER NOT NULL DEFAULT 0,
+            provider_task_id VARCHAR(128),
+            status VARCHAR(24) NOT NULL DEFAULT 'pending',
+            output_asset_id INTEGER REFERENCES cv_media_assets(id),
+            error_code VARCHAR(64),
+            CONSTRAINT uq_cv_render_segment_index UNIQUE(render_batch_id, segment_index)
+        )"""
+    ))
+    for index_sql in (
+        "CREATE INDEX IF NOT EXISTS ix_cv_render_batch_project_status ON cv_render_batches(replication_project_id, status)",
+        "CREATE INDEX IF NOT EXISTS ix_cv_render_segment_batch_status ON cv_render_segments(render_batch_id, status)",
+    ):
+        await conn.execute(text(index_sql))
 
     # Extend pre-existing quote/attempt/export rows without rewriting history.
     extension_specs = {

@@ -634,6 +634,55 @@ class CvSubtitleVersion(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
+class CvRenderBatch(Base):
+    """One preview or final render coordination object for a full video."""
+
+    __tablename__ = "cv_render_batches"
+    __table_args__ = (Index("ix_cv_render_batch_project_status", "replication_project_id", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    replication_project_id: Mapped[int] = mapped_column(ForeignKey("cv_replication_projects.id"), index=True)
+    script_version_id: Mapped[int | None] = mapped_column(ForeignKey("cv_script_versions.id"), nullable=True, index=True)
+    anchor_set_id: Mapped[int | None] = mapped_column(ForeignKey("cv_anchor_sets.id"), nullable=True, index=True)
+    voice_render_id: Mapped[int | None] = mapped_column(ForeignKey("cv_voice_renders.id"), nullable=True, index=True)
+    subtitle_version_id: Mapped[int | None] = mapped_column(ForeignKey("cv_subtitle_versions.id"), nullable=True, index=True)
+    stage: Mapped[str] = mapped_column(String(16), default="preview")
+    status: Mapped[str] = mapped_column(String(24), default="ready", index=True)
+    master_voice_track_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    total_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    frozen_version_hash: Mapped[str] = mapped_column(String(64), default="")
+    expected_version: Mapped[int] = mapped_column(Integer, default=1)
+    created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvRenderSegment(Base):
+    """One <=15s provider render segment in a batch."""
+
+    __tablename__ = "cv_render_segments"
+    __table_args__ = (
+        UniqueConstraint("render_batch_id", "segment_index", name="uq_cv_render_segment_index"),
+        Index("ix_cv_render_segment_batch_status", "render_batch_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    render_batch_id: Mapped[int] = mapped_column(ForeignKey("cv_render_batches.id"), index=True)
+    segment_index: Mapped[int] = mapped_column(Integer)
+    shot_keys_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_start_ms: Mapped[int] = mapped_column(Integer)
+    source_end_ms: Mapped[int] = mapped_column(Integer)
+    overlap_ms: Mapped[int] = mapped_column(Integer, default=0)
+    continuity_anchor_time_ms: Mapped[int] = mapped_column(Integer, default=0)
+    request_duration_ms: Mapped[int] = mapped_column(Integer)
+    anchor_frame_ids_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    segment_audio_start_ms: Mapped[int] = mapped_column(Integer, default=0)
+    segment_audio_end_ms: Mapped[int] = mapped_column(Integer, default=0)
+    provider_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    output_asset_id: Mapped[int | None] = mapped_column(ForeignKey("cv_media_assets.id"), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
+
 class CvRightsEvidence(Base):
     """权利凭证快照，支持视频、人物、声音、音乐和商品素材。"""
 

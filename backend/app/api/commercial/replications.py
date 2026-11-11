@@ -24,6 +24,8 @@ from app.models_commercial import (
     CvScriptVersion,
     CvShotGraph,
     CvVoiceRender,
+    CvRenderBatch,
+    CvRenderSegment,
 )
 from app.schemas_commercial import ScriptBatchPayload, ScriptVersionPayload, ShotGraphPayload
 from app.services.commercial.replication import (
@@ -33,6 +35,7 @@ from app.services.commercial.replication import (
     validate_script_contract,
 )
 from app.services.providers.atlas.gemini import GeminiAdapter
+from app.services.commercial.segment_planner import plan_long_video
 
 router = APIRouter()
 
@@ -98,9 +101,113 @@ async def get_replication(
     }
 
 
+@router.post("/replications/{project_id}/render-plan", summary="规划长视频分段")
+async def create_render_plan(
+    project_id: int,
+    body: RenderPlanBody | None = None,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = await _get_project(db, project_id, user)
+    body = body or RenderPlanBody()
+    revision = await db.scalar(select(func.max(CvShotGraph.revision)).where(
+        CvShotGraph.replication_project_id == project.id
+    ))
+    if revision is None:
+        raise HTTPException(status_code=409, detail="请先完成视频分析")
+    rows = list((await db.execute(select(CvShotGraph).where(
+        CvShotGraph.replication_project_id == project.id,
+        CvShotGraph.revision == revision,
+    ).order_by(CvShotGraph.start_ms))).scalars().all())
+    graph = {"shots": [{
+        "shot_key": row.shot_key,
+        "start_ms": row.start_ms,
+        "end_ms": row.end_ms,
+        "action_neutral_points_ms": row.anchor_candidates_json or [],
+    } for row in rows]}
+    plan = plan_long_video(
+        graph,
+        source_duration_ms=body.source_duration_ms,
+        master_voice_track_id=body.master_voice_track_id,
+        overlap_ms=body.overlap_ms,
+    )
+    batch = CvRenderBatch(
+        replication_project_id=project.id,
+        script_version_id=project.current_script_version_id,
+        anchor_set_id=project.current_anchor_set_id,
+        voice_render_id=project.current_voice_render_id,
+        stage="preview",
+        status=plan["status"],
+        master_voice_track_id=body.master_voice_track_id,
+        total_duration_ms=plan["source_duration_ms"],
+        created_by=user.id,
+    )
+    db.add(batch)
+    await db.flush()
+    for segment in plan["segments"]:
+        db.add(CvRenderSegment(
+            render_batch_id=batch.id,
+            segment_index=segment["segment_index"],
+            shot_keys_json=[segment["shot_key"]],
+            source_start_ms=segment["source_start_ms"],
+            source_end_ms=segment["source_end_ms"],
+            overlap_ms=segment["overlap_ms"],
+            continuity_anchor_time_ms=segment["continuity_anchor_time_ms"],
+            request_duration_ms=segment["duration_ms"],
+            segment_audio_start_ms=segment["start_ms"],
+            segment_audio_end_ms=segment["end_ms"],
+            status="needs_human_review" if segment["requires_manual_review"] else "pending",
+        ))
+    await db.commit()
+    return {"id": batch.id, **plan}
+
+
+@router.get("/render-batches/{batch_id}", summary="读取长视频分段计划")
+async def get_render_plan(
+    batch_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    batch = await db.get(CvRenderBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="渲染批次不存在")
+    project = await _get_project(db, batch.replication_project_id, user)
+    segments = list((await db.execute(select(CvRenderSegment).where(
+        CvRenderSegment.render_batch_id == batch.id
+    ).order_by(CvRenderSegment.segment_index))).scalars().all())
+    return {
+        "id": batch.id,
+        "replication_project_id": project.id,
+        "stage": batch.stage,
+        "status": batch.status,
+        "master_voice_track_id": batch.master_voice_track_id,
+        "total_duration_ms": batch.total_duration_ms,
+        "segments": [{
+            "segment_index": row.segment_index,
+            "shot_keys": row.shot_keys_json or [],
+            "source_start_ms": row.source_start_ms,
+            "source_end_ms": row.source_end_ms,
+            "overlap_ms": row.overlap_ms,
+            "continuity_anchor_time_ms": row.continuity_anchor_time_ms,
+            "request_duration_ms": row.request_duration_ms,
+            "segment_audio_start_ms": row.segment_audio_start_ms,
+            "segment_audio_end_ms": row.segment_audio_end_ms,
+            "status": row.status,
+            "provider_task_id": row.provider_task_id,
+            "error_code": row.error_code,
+        } for row in segments],
+    }
+
+
 class AnalyzeBody(BaseModel):
     fixture: dict[str, Any] | None = None
     duration_ms: int | None = Field(default=None, gt=0)
+
+
+class RenderPlanBody(BaseModel):
+    source_duration_ms: int | None = Field(default=None, gt=0)
+    master_voice_track_id: str | None = None
+    overlap_ms: int = Field(default=0, ge=0, le=2_000)
 
 
 class ScriptBody(ScriptBatchPayload):

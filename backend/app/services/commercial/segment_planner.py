@@ -39,7 +39,9 @@ class SegmentPlanningResult:
             "status": self.status,
             "timeline_version": 1,
             "source_duration_ms": self.source_duration_ms,
+            "total_duration_ms": self.source_duration_ms,
             "master_voice_track_id": self.master_voice_track_id,
+            "audio_strategy": "master_voice_track_range",
             "requires_manual_review": self.requires_manual_review,
             "review_reasons": list(self.review_reasons),
             "segments": [dict(item) for item in self.segments],
@@ -202,6 +204,7 @@ def plan_segments(
     source_duration_ms: int | None = None,
     max_segment_duration_ms: int = MAX_SEGMENT_DURATION_MS,
     overlap_ms: int = 0,
+    master_voice_track_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """Return contiguous, bounded logical ranges in deterministic shot order."""
     rows = _normalise_rows(shot_graph)
@@ -226,6 +229,11 @@ def plan_segments(
         built.extend(shot_segments)
     for index, item in enumerate(built):
         item["segment_index"] = index
+        item["master_voice_track_id"] = master_voice_track_id
+        item["segment_audio_range"] = {
+            "start_ms": item["start_ms"],
+            "end_ms": item["end_ms"],
+        }
     return built
 
 
@@ -268,15 +276,11 @@ def plan_long_video(
         source_duration_ms=duration,
         max_segment_duration_ms=max_segment_duration_ms,
         overlap_ms=overlap_ms,
+        master_voice_track_id=master_voice_track_id,
     )
     review_reasons: list[str] = []
     previous_end: int | None = None
     for item in segments:
-        item["master_voice_track_id"] = master_voice_track_id
-        item["segment_audio_range"] = {
-            "start_ms": item["start_ms"],
-            "end_ms": item["end_ms"],
-        }
         if previous_end is not None and item["start_ms"] != previous_end:
             review_reasons.append(
                 f"timeline gap or overlap between {previous_end}ms and {item['start_ms']}ms"

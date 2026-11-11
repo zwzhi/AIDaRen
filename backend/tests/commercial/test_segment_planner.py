@@ -76,3 +76,20 @@ def test_plan_is_reproducible_for_same_graph():
     second = plan_long_video(_shot_graph(), master_voice_track_id="voice-master-1")
 
     assert first == second
+
+
+def test_preview_composition_matches_duplicate_shot_segments_by_index():
+    from app.services.commercial.segment_planner import plan_long_video
+    from app.services.commercial.timeline import TimelineCompiler
+
+    plan = plan_long_video(_shot_graph(), master_voice_track_id="voice-master-1")
+    outputs = [
+        {"shot_key": item["shot_key"], "segment_index": item["segment_index"], "output_key": f"out-{item['segment_index']}"}
+        for item in reversed(plan["segments"])
+    ]
+
+    preview = TimelineCompiler().compose_preview(outputs, plan["timeline"])
+
+    assert [item["output_key"] for item in preview.segments] == [
+        f"out-{index}" for index in range(len(plan["segments"]))
+    ]
