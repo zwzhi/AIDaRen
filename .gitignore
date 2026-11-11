@@ -83,3 +83,5 @@ frontend/dist/
 .cursor/
 .work/
 printfilm/
+# 演示环境运行时私有存储副本（种子素材在 demo_env/media，均可由 ffmpeg 再生）
+artifacts/demo_env/storage/
