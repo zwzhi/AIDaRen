@@ -5,6 +5,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { COMMERCIAL_PROJECT, COMMERCIAL_HOME } from '../lib/projectScope'
 import { api } from '../api'
 import BrandMark from '../components/BrandMark'
+import Button from '../components/ui/Button'
 import LanguageSwitch from '../components/layout/LanguageSwitch'
 import { useI18n } from '../i18n'
 import { isValidAuthPassword, isValidEmailInput } from '../lib/validateAuthForm'
@@ -226,26 +227,26 @@ export default function AuthPage() {
           )}
           {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
           {error ? <p className="error" role="alert">{error}</p> : null}
-          <button className="btn primary" disabled={loading}>
+          <Button variant="lime" size="lg" block disabled={loading} type="submit">
             {loading ? t('auth.processing') : submitLabel}
-          </button>
+          </Button>
         </form>
         {mode === 'login' && (
-          <button type="button" className="linkish" onClick={() => switchMode('forgot')}>
+          <button type="button" className="cv-auth-link" onClick={() => switchMode('forgot')}>
             {t('auth.forgotLink')}
           </button>
         )}
         {(mode === 'login' || mode === 'register') && (
           <button
             type="button"
-            className="linkish"
+            className="cv-auth-link"
             onClick={() => switchMode(mode === 'login' ? 'register' : 'login')}
           >
             {mode === 'login' ? t('auth.toRegister') : t('auth.toLogin')}
           </button>
         )}
         {(mode === 'forgot' || mode === 'reset') && (
-          <button type="button" className="linkish" onClick={() => switchMode('login')}>
+          <button type="button" className="cv-auth-link" onClick={() => switchMode('login')}>
             {t('auth.backToLogin')}
           </button>
         )}

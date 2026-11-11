@@ -1,57 +1,7 @@
 /* Residual styles for Auth and shared form utilities.
    Marketing / studio shells live in styles/printfilm.css */
 
-.auth-shell {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--pf-bg);
-  padding: 2rem 1rem;
-}
-
-.auth-panel {
-  width: 100%;
-  max-width: 440px;
-  padding: 2.5rem 2rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  background: var(--pf-card);
-  border: 1px solid var(--pf-line);
-  border-radius: var(--pf-radius, 14px);
-  box-shadow: 0 8px 28px rgba(17,19,24,0.06);
-}
-
-.auth-panel-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
-.auth-panel h1 {
-  font-family: 'Space Grotesk', 'Noto Sans SC', sans-serif;
-  font-size: 1.6rem;
-  letter-spacing: 0.04em;
-  margin: 0.5rem 0 0;
-  text-align: center;
-}
-
-.auth-panel form { text-align: left; }
-
-.auth-panel .stack { text-align: left; }
-
-.auth-panel label {
-  display: flex; flex-direction: column; gap: 0.3rem;
-  font-size: 0.85rem; color: var(--pf-muted);
-}
-
-.auth-visual, .ink-wash { display: none; } /* 商业项目隐藏装饰面板 */
-
-@media (max-width: 480px) {
-  .auth-panel { padding: 2rem 1.25rem; border-radius: var(--pf-radius-sm, 10px); }
-}
+/* Auth styles moved to commercial.css */
 
 /* 登录页独立于应用壳，同样避免触屏输入触发浏览器缩放。 */
 @media (hover: none) and (pointer: coarse) {

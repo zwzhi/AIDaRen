@@ -108,3 +108,116 @@
 .cv-status-tag.is-pending { background: #fef3c7; color: #92400e; }
 .cv-status-tag.is-generated { background: #dbeafe; color: #1e40af; }
 .cv-status-tag.is-composed { background: #e0e7ff; color: #3730a3; }
+
+/* ── 登录页统一设计体系 ── */
+.auth-shell {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--pf-bg);
+  padding: 2rem 1rem;
+}
+
+.auth-panel {
+  width: 100%;
+  max-width: 440px;
+  padding: 2.5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: var(--pf-card);
+  border: 1px solid var(--pf-line);
+  border-radius: var(--pf-radius, 14px);
+  box-shadow: var(--pf-shadow);
+}
+
+.auth-panel-top {
+  display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+  width: 100%;
+}
+
+.auth-panel h1 {
+  font-family: inherit; font-size: 1.5rem; font-weight: 700;
+  letter-spacing: 0; margin: 0.5rem 0; text-align: center;
+  color: var(--pf-ink);
+}
+
+.auth-panel form {
+  display: flex; flex-direction: column; gap: 14px; width: 100%;
+}
+
+.auth-panel label {
+  display: flex; flex-direction: column; gap: 6px;
+  font-size: 13px; color: var(--pf-muted); font-weight: 500;
+}
+
+.auth-panel input {
+  width: 100%; height: 40px; padding: 0 12px;
+  border: 1px solid var(--pf-line); border-radius: var(--pf-radius-sm, 10px);
+  background: var(--pf-card); color: var(--pf-ink);
+  font: inherit; font-size: 14px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.auth-panel input:focus {
+  outline: none;
+  border-color: var(--pf-lime);
+  box-shadow: 0 0 0 3px rgba(182, 255, 0, 0.25);
+}
+
+.auth-panel input::placeholder { color: var(--pf-muted); }
+
+.auth-notice, .auth-panel .error {
+  padding: 10px 14px; border-radius: var(--pf-radius-sm, 10px);
+  font-size: 13px; margin: 0;
+}
+.auth-notice { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+.auth-panel .error { background: #fef2f2; color: #b3261e; border: 1px solid #fecaca; }
+
+.cv-auth-link {
+  border: none; background: none; color: var(--pf-muted);
+  font-size: 13px; cursor: pointer; padding: 4px 8px;
+  text-decoration: underline; text-underline-offset: 2px;
+  transition: color 0.15s;
+}
+.cv-auth-link:hover { color: var(--pf-ink); }
+
+.auth-visual, .ink-wash { display: none; }
+
+@media (max-width: 480px) {
+  .auth-panel { padding: 2rem 1.25rem; }
+}
+
+/* ── 登录页按钮（不走 AppShell 时 Button 组件的兜底样式）── */
+.auth-panel button[type="submit"],
+.auth-panel .pf-btn.pf-btn-lime,
+.auth-panel .pf-btn {
+  width: 100%;
+  height: 44px;
+  padding: 0 20px;
+  border: none;
+  border-radius: var(--pf-radius-sm, 10px);
+  background: var(--pf-lime, #b6ff00);
+  color: var(--pf-ink, #111318);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: filter 0.15s, transform 0.1s;
+  margin-top: 6px;
+}
+.auth-panel button[type="submit"]:hover,
+.auth-panel .pf-btn-lime:hover { filter: brightness(0.92); }
+.auth-panel button[type="submit"]:active,
+.auth-panel .pf-btn-lime:active { transform: scale(0.98); }
+.auth-panel button[type="submit"]:disabled,
+.auth-panel .pf-btn-lime:disabled { opacity: 0.6; cursor: not-allowed; }
+.auth-panel button[type="submit"]:focus-visible,
+.auth-panel .pf-btn-lime:focus-visible {
+  outline: none; box-shadow: 0 0 0 3px rgba(182,255,0,0.35);
+}
