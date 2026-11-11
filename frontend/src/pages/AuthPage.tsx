@@ -6,7 +6,6 @@ import { COMMERCIAL_PROJECT, COMMERCIAL_HOME } from '../lib/projectScope'
 import { api } from '../api'
 import BrandMark from '../components/BrandMark'
 import Button from '../components/ui/Button'
-import LanguageSwitch from '../components/layout/LanguageSwitch'
 import { useI18n } from '../i18n'
 import { isValidAuthPassword, isValidEmailInput } from '../lib/validateAuthForm'
 
@@ -172,7 +171,7 @@ export default function AuthPage() {
       <div className="auth-panel">
         <div className="auth-panel-top">
           <BrandMark />
-          <LanguageSwitch />
+          {/* 语言切换在商业模式下隐藏 */}
         </div>
         <h1>{title}</h1>
         <form onSubmit={onSubmit} className="stack" noValidate>

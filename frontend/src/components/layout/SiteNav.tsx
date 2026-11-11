@@ -225,7 +225,7 @@ export default function SiteNav({ active }: Props) {
             {RESOURCE_NAV.map((item) => renderLink(item))}</>}
       </nav>
       <div className="pf-topbar-actions">
-        <div className="pf-topbar-language"><LanguageSwitch /></div>
+        {!COMMERCIAL_PROJECT && <div className="pf-topbar-language"><LanguageSwitch /></div>}
         <Link to={COMMERCIAL_PROJECT ? '/commercial/settings' : '/help'} className={`pf-topbar-help${current === 'help' ? ' is-active' : ''}`} aria-label={t('nav.helpCenter')} aria-current={current === 'help' ? 'page' : undefined}><CircleHelp size={18} aria-hidden /><span>{t('nav.help')}</span></Link>
         <AccountMenu user={user} open={accountOpen} marketplaceEnabled={Boolean(marketplace?.enabled)} onOpenChange={changeAccountOpen} onNavigate={goPersonal} onLogout={logout} />
         <button type="button" className="pf-topbar-create" aria-label={t('nav.startCreate')} onClick={goCreate}><Plus size={17} aria-hidden /><span>{t('nav.startCreate')}</span></button>
@@ -250,7 +250,7 @@ export default function SiteNav({ active }: Props) {
           )}
         </nav>
         <div className="pf-topbar-menu-footer">
-          <LanguageSwitch />
+          {!COMMERCIAL_PROJECT && <LanguageSwitch />}
           <Link to={COMMERCIAL_PROJECT ? '/commercial/settings' : '/help'} onClick={() => setMenuOpen(false)}><CircleHelp size={17} aria-hidden /><span>{t('nav.help')}</span></Link>
         </div>
       </section>
