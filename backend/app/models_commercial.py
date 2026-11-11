@@ -272,7 +272,9 @@ class CvBudgetPool(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), default="default")
-    scope: Mapped[str] = mapped_column(String(8), default="mock")  # mock|real：演示预算与真实授权隔离
+    scope: Mapped[str] = mapped_column(
+        String(8), default="mock", server_default="mock"
+    )  # mock|real：演示预算与真实授权隔离
     currency: Mapped[str] = mapped_column(String(8), default="USD")
     total_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
     reserved_amount: Mapped[Decimal] = mapped_column(Numeric(20, 8), default=0)
