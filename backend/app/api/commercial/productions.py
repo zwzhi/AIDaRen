@@ -174,7 +174,14 @@ async def list_templates(
             "current_version": template.current_version,
             "versions": [
                 {"id": v.id, "version": v.version, "status": v.status,
-                 "published_at": v.published_at.isoformat() if v.published_at else None}
+                 "published_at": v.published_at.isoformat() if v.published_at else None,
+                 # 卡片展示用的结构统计（从冻结快照计算，不改模板语义）
+                 "shot_count": len((v.structure_json or {}).get("shots") or []),
+                 "total_duration_ms": sum(
+                     max(0, int(s.get("end_ms") or 0) - int(s.get("start_ms") or 0))
+                     for s in (v.structure_json or {}).get("shots") or []),
+                 "variables": list((v.structure_json or {}).get("variables") or []),
+                }
                 for v in versions
             ],
         })

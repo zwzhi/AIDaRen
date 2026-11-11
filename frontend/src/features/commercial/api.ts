@@ -10,7 +10,7 @@ export type CommercialAsset = {
 }
 
 export type AnalysisOut = { analysis_run_id: number; status: string; mock: boolean; error?: string | null }
-export type AnalysisResult = { id: number; status: string; result: { shots: Shot[] } | null }
+export type AnalysisResult = { id: number; status: string; error?: string | null; result: { shots: Shot[] } | null }
 export type Shot = {
   shot_id: string; start_ms: number; end_ms: number
   observation?: string; inference?: string; uncertainty?: string
@@ -18,7 +18,8 @@ export type Shot = {
 }
 export type TemplateItem = {
   id: number; name: string; current_version: number
-  versions: { id: number; version: number; status: string; published_at: string | null }[]
+  versions: { id: number; version: number; status: string; published_at: string | null
+    shot_count?: number; total_duration_ms?: number; variables?: string[] }[]
 }
 export type ActorItem = {
   id: number; name: string; current_version: number
