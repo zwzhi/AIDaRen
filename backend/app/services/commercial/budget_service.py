@@ -155,7 +155,7 @@ async def _reserve_with_pool_row(
     pool = (await db.execute(
         select(CvBudgetPool).where(
             CvBudgetPool.name == "default", CvBudgetPool.scope == scope,
-        ).with_for_update()
+        ).order_by(CvBudgetPool.id.desc()).limit(1).with_for_update()
     )).scalar_one_or_none()
     if pool is None:
         raise BudgetError(
