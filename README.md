@@ -245,10 +245,6 @@ docker-compose.yml        拉公开镜像一键启动
 docker-compose.full.yml   从源码构建
 ```
 
-## 社区
-
-- GitHub：https://github.com/yi1108/printfilm
-- 微信加 **`gitcc188`**（备注「入群」）：部署答疑 / 短剧交流 / 模板分享
 
 ## Star History
 
