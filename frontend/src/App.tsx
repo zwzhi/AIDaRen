@@ -63,7 +63,7 @@ export default function App() {
     <TeamPreviewProvider><BrowserRouter>
       <Routes>
         <Route path="/marketplace/*" element={<Suspense fallback={<p>{locale === 'en' ? 'Loading marketplace…' : '正在加载作品与招募…'}</p>}><Marketplace /></Suspense>} />
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<CommercialRedirect><HomePage /></CommercialRedirect>} />
         <Route path="/method" element={<MethodPage />} />
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/templates" element={<TemplatesPage />} />
@@ -116,4 +116,11 @@ export default function App() {
       <DialogHost />
     </BrowserRouter></TeamPreviewProvider>
   )
+}
+
+
+/** 商业项目：根路径直达商业模板库（不展示上游营销首页）。 */
+function CommercialRedirect({ children }: { children: React.ReactElement }) {
+  if (COMMERCIAL_PROJECT) return <Navigate to="/commercial/templates" replace />
+  return children
 }

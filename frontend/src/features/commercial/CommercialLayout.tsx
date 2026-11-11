@@ -4,6 +4,8 @@
  * 只做布局壳，不含业务逻辑；RequireAuth 由路由层继续负责。
  */
 import { useEffect, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import AppShell from '../../components/layout/AppShell'
 import { commercialApi } from './api'
 
@@ -15,15 +17,25 @@ export default function CommercialLayout({ children }: { children: ReactNode }) 
   )
 }
 
-/** 商业页统一的标题区（复用 pf-section-head 层级与边距）。 */
-export function CommercialPageHead({ title, desc, children }: {
-  title: string; desc?: string; children?: ReactNode
+/**
+ * 统一页面标题区（含可选返回按钮）。
+ * 返回目标是明确的父级路由（不用 navigate(-1)，避免从外站直达时后退到站外）。
+ */
+export function CommercialPageHead({ title, desc, backTo, backLabel, children }: {
+  title: string; desc?: string; backTo?: string; backLabel?: string; children?: ReactNode
 }) {
   return (
     <div className="pf-section-head">
-      <div>
-        <h2>{title}</h2>
-        {desc && <p>{desc}</p>}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, minWidth: 0 }}>
+        {backTo && (
+          <Link to={backTo} className="cv-back-btn" aria-label={backLabel ?? '返回'} title={backLabel ?? '返回'}>
+            <ArrowLeft size={18} aria-hidden />
+          </Link>
+        )}
+        <div style={{ minWidth: 0 }}>
+          <h2>{title}</h2>
+          {desc && <p>{desc}</p>}
+        </div>
       </div>
       {children}
     </div>
@@ -46,10 +58,10 @@ export function MockModeNote({ onToggleTech, techOpen }: { onToggleTech?: () => 
       : '无法确认当前服务模式，提交生成前请先检查 API 状态。'
   return (
     <div style={{ margin: '4px 0 12px' }}>
-      <p className="pf-muted" style={{ fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+      <p className="pf-muted" style={{ fontSize: 12, margin: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <span style={{
           display: 'inline-block', padding: '1px 8px', borderRadius: 999,
-          background: '#fff3e0', color: '#b26a00', fontSize: 11,
+          background: '#fff3e0', color: '#b26a00', fontSize: 11, whiteSpace: 'nowrap',
         }}>{label}</span>
         {description}
         {onToggleTech && (

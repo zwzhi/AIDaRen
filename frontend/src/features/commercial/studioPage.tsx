@@ -4,7 +4,8 @@
  * 单镜重做（新报价→新尝试，旧版本与费用保留）；业务接口全部沿用。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
+import { ArrowLeft } from 'lucide-react'
 import Button from '../../components/ui/Button'
 import CommercialLayout, { CommercialPageHead, MockModeNote } from './CommercialLayout'
 import {
@@ -199,10 +200,15 @@ type ProductionItem = {
 
       {/* ① 选模板与素材 */}
       {productionId != null ? (
-        <p className="pf-muted" style={{ fontSize: 13, margin: '0 0 12px' }}>
-          正在编辑作品 #{productionId}（②③区）。要新建其它作品，
-          <a href="/commercial/studio" style={{ color: 'var(--pf-ink)' }}>点这里回到空白工作台</a>。
-        </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '0 0 12px' }}>
+          <Link to="/commercial/tasks" className="cv-back-btn" aria-label="返回任务与作品" title="返回任务与作品">
+            <ArrowLeft size={18} aria-hidden />
+          </Link>
+          <p className="pf-muted" style={{ fontSize: 13, margin: 0 }}>
+            正在编辑作品 #{productionId}。要新建其它作品，
+            <Link to="/commercial/studio" style={{ color: 'var(--pf-ink)' }}>点这里</Link>。
+          </p>
+        </div>
       ) : (
         <>
           {recent.length > 0 && (

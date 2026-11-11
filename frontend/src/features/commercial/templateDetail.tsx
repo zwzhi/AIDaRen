@@ -103,6 +103,8 @@ export default function TemplateVersionDetail() {
       <CommercialPageHead
         title={detail ? `${detail.template_name} · V${detail.version}` : '模板版本详情'}
         desc="已发布版本的冻结快照；历史作品继续引用此版本，编辑需发布新版本。"
+        backTo="/commercial/templates"
+        backLabel="返回模板库"
       />
       <MockModeNote />
       {error && <p style={{ color: '#b3261e' }}>{error}</p>}

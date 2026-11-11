@@ -170,7 +170,7 @@ export default function SiteNav({ active }: Props) {
     setAccountOpen(false)
     selectTeam(null)
     window.dispatchEvent(new Event(USER_UPDATED_EVENT))
-    nav('/')
+    nav('/auth')  // 商业项目：退出到登录页，不回到上游营销首页
   }
 
   /** 顶栏使用文字导航，展开菜单补充图标；所有入口沿用同一份路由配置。 */
@@ -226,7 +226,7 @@ export default function SiteNav({ active }: Props) {
       </nav>
       <div className="pf-topbar-actions">
         <div className="pf-topbar-language"><LanguageSwitch /></div>
-        <Link to="/help" className={`pf-topbar-help${current === 'help' ? ' is-active' : ''}`} aria-label={t('nav.helpCenter')} aria-current={current === 'help' ? 'page' : undefined}><CircleHelp size={18} aria-hidden /><span>{t('nav.help')}</span></Link>
+        <Link to={COMMERCIAL_PROJECT ? '/commercial/settings' : '/help'} className={`pf-topbar-help${current === 'help' ? ' is-active' : ''}`} aria-label={t('nav.helpCenter')} aria-current={current === 'help' ? 'page' : undefined}><CircleHelp size={18} aria-hidden /><span>{t('nav.help')}</span></Link>
         <AccountMenu user={user} open={accountOpen} marketplaceEnabled={Boolean(marketplace?.enabled)} onOpenChange={changeAccountOpen} onNavigate={goPersonal} onLogout={logout} />
         <button type="button" className="pf-topbar-create" aria-label={t('nav.startCreate')} onClick={goCreate}><Plus size={17} aria-hidden /><span>{t('nav.startCreate')}</span></button>
         <button ref={menuButtonRef} type="button" className="pf-topbar-menu-toggle" aria-label={t('nav.openMenu')} aria-controls="pf-topbar-menu" aria-expanded={menuOpen} onClick={() => { setAccountOpen(false); setMenuOpen(true) }}><Menu size={21} aria-hidden /></button>
@@ -251,7 +251,7 @@ export default function SiteNav({ active }: Props) {
         </nav>
         <div className="pf-topbar-menu-footer">
           <LanguageSwitch />
-          <Link to="/help" onClick={() => setMenuOpen(false)}><CircleHelp size={17} aria-hidden /><span>{t('nav.help')}</span></Link>
+          <Link to={COMMERCIAL_PROJECT ? '/commercial/settings' : '/help'} onClick={() => setMenuOpen(false)}><CircleHelp size={17} aria-hidden /><span>{t('nav.help')}</span></Link>
         </div>
       </section>
     </>}

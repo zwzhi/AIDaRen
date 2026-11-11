@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { COMMERCIAL_PROJECT } from '../../lib/projectScope'
 import { Images, ListTodo, LogOut, Settings2, Store, UserRound, Wallet } from 'lucide-react'
 import type { User } from '../../api'
 import { useI18n } from '../../i18n'
@@ -60,16 +61,17 @@ export default function AccountMenu({ user, open, marketplaceEnabled, onOpenChan
       <nav aria-label={t('nav.accountMenu')}>
         <div className="pf-topbar-account-group" role="group" aria-label={t('nav.myCreation')}>
           <span>{t('nav.myCreation')}</span>
-          {PERSONAL_NAV.map((item) => {
+          {!COMMERCIAL_PROJECT && PERSONAL_NAV.map((item) => {
             const Icon = item.key === 'tasks' ? ListTodo : Images
             return <Link key={item.key} to={item.path} onClick={onNavigate}><Icon size={17} aria-hidden /><span>{t(item.label)}</span></Link>
           })}
+          {COMMERCIAL_PROJECT && <Link to="/commercial/tasks" onClick={onNavigate}><ListTodo size={17} aria-hidden /><span>商业作品</span></Link>}
           {marketplaceEnabled && <Link to="/marketplace/mine" onClick={onNavigate}><Store size={17} aria-hidden /><span>{t('nav.myPublishing')}</span></Link>}
         </div>
         <div className="pf-topbar-account-group" role="group" aria-label={t('nav.accountManagement')}>
           <span>{t('nav.accountManagement')}</span>
           <Link to="/settings" onClick={onNavigate}><Settings2 size={17} aria-hidden /><span>{t('nav.profile')}</span></Link>
-          <Link to="/settings?tab=subscription" onClick={onNavigate}><Wallet size={17} aria-hidden /><span>{t('nav.balanceBilling')}</span></Link>
+          {!COMMERCIAL_PROJECT && <Link to="/settings?tab=subscription" onClick={onNavigate}><Wallet size={17} aria-hidden /><span>{t('nav.balanceBilling')}</span></Link>}
         </div>
       </nav>
       <button type="button" className="pf-topbar-account-logout" onClick={onLogout}><LogOut size={17} aria-hidden /><span>{t('settings.logout')}</span></button>
