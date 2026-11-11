@@ -17,11 +17,13 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
 from app.models_commercial import (
+    CvAnchorSet,
     CvProduction,
     CvProductVersion,
     CvReplicationProject,
     CvScriptVersion,
     CvShotGraph,
+    CvVoiceRender,
 )
 from app.schemas_commercial import ScriptBatchPayload, ScriptVersionPayload, ShotGraphPayload
 from app.services.commercial.replication import (
@@ -68,6 +70,32 @@ async def create_replication(
     await db.commit()
     return {"id": project.id, "production_id": project.production_id,
             "mode": project.mode, "status": project.status, "reused": False}
+
+
+@router.get("/replications/{project_id}", summary="读取复刻项目")
+async def get_replication(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = await _get_project(db, project_id, user)
+    return {
+        "id": project.id,
+        "production_id": project.production_id,
+        "mode": project.mode,
+        "recommended_mode": project.mode,
+        "route_reason": project.route_reason,
+        "risks": [],
+        "estimated_minutes": 12 if project.mode == "structural_rewrite" else 18,
+        "estimated_cost": "¥12.00" if project.mode == "structural_rewrite" else "¥18.00",
+        "status": project.status,
+        "rights_status": project.rights_status,
+        "product_match_status": "pending",
+        "script_approved": False,
+        "anchors_approved": False,
+        "voice_approved": False,
+        "preview_status": "idle",
+    }
 
 
 class AnalyzeBody(BaseModel):
@@ -184,6 +212,30 @@ async def get_shot_graph(
     return _graph_response(rows, int(revision))
 
 
+@router.post("/replications/{project_id}/shot-graph/confirm", summary="确认复刻 Shot Graph")
+async def confirm_shot_graph(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = await _get_project(db, project_id, user)
+    revision = await db.scalar(select(func.max(CvShotGraph.revision)).where(
+        CvShotGraph.replication_project_id == project.id
+    ))
+    if revision is None:
+        raise HTTPException(status_code=409, detail="尚未生成 Shot Graph")
+    rows = list((await db.execute(select(CvShotGraph).where(
+        CvShotGraph.replication_project_id == project.id,
+        CvShotGraph.revision == revision,
+    ))).scalars().all())
+    if any(row.status == "needs_human_review" for row in rows):
+        raise HTTPException(status_code=409, detail="Shot Graph 仍有低置信镜头待人工确认")
+    project.status = "script_review"
+    project.expected_version += 1
+    await db.commit()
+    return {**_graph_response(rows, int(revision)), "confirmed": True}
+
+
 @router.post("/replications/{project_id}/scripts", summary="生成结构化复刻脚本")
 async def create_scripts(
     project_id: int,
@@ -255,6 +307,25 @@ async def create_scripts(
             "needs_human_review": any(row.status == "needs_human_review" for row in rows)}
 
 
+@router.get("/replications/{project_id}/scripts", summary="列出复刻脚本版本")
+async def list_scripts(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = await _get_project(db, project_id, user)
+    rows = list((await db.execute(select(CvScriptVersion).where(
+        CvScriptVersion.replication_project_id == project.id
+    ).order_by(CvScriptVersion.version.desc()))).scalars().all())
+    return {"items": [{
+        "id": row.id,
+        "version": row.version,
+        "status": row.status,
+        "mode": row.mode,
+        "scripts": list((row.script_json or {}).get("scripts") or []),
+    } for row in rows]}
+
+
 async def _approve_script(
     version_id: int,
     db: AsyncSession,
@@ -296,5 +367,68 @@ async def approve_replication_script(
     user: User = Depends(get_current_user),
 ):
     return await _approve_script(version_id, db, user, project_id)
+
+
+@router.post("/anchor-sets/{anchor_set_id}/approve", summary="批准复刻锚帧集合")
+async def approve_anchor_set(
+    anchor_set_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    row = await db.get(CvAnchorSet, anchor_set_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="锚帧集合不存在")
+    project = await _get_project(db, row.replication_project_id, user)
+    if row.status not in {"candidate", "review"}:
+        raise HTTPException(status_code=409, detail="锚帧集合当前状态不可批准")
+    row.status = "approved"
+    row.approved_by = user.id
+    row.approved_at = datetime.now(UTC)
+    project.current_anchor_set_id = row.id
+    project.status = "voice_ready"
+    await db.commit()
+    return {"id": row.id, "status": row.status, "version": row.version}
+
+
+@router.post("/voice-renders/{voice_render_id}/approve", summary="批准复刻声音版本")
+async def approve_voice_render(
+    voice_render_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    row = await db.get(CvVoiceRender, voice_render_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="声音版本不存在")
+    project = await _get_project(db, row.replication_project_id, user)
+    if row.status not in {"rendered", "pending_review", "ready"}:
+        raise HTTPException(status_code=409, detail="声音版本当前状态不可批准")
+    row.status = "approved"
+    row.approved_by = user.id
+    row.approved_at = datetime.now(UTC)
+    project.current_voice_render_id = row.id
+    await db.commit()
+    return {"id": row.id, "status": row.status, "duration_ms": row.duration_ms or 0}
+
+
+@router.post("/replications/{project_id}/preview", summary="生成复刻低清预览")
+async def create_preview(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = await _get_project(db, project_id, user)
+    script = await db.get(CvScriptVersion, project.current_script_version_id) if project.current_script_version_id else None
+    anchors = await db.get(CvAnchorSet, project.current_anchor_set_id) if project.current_anchor_set_id else None
+    voice = await db.get(CvVoiceRender, project.current_voice_render_id) if project.current_voice_render_id else None
+    if script is None or script.status != "approved":
+        raise HTTPException(status_code=409, detail="脚本尚未批准")
+    if anchors is None or anchors.status != "approved":
+        raise HTTPException(status_code=409, detail="锚帧尚未批准")
+    if voice is None or voice.status != "approved":
+        raise HTTPException(status_code=409, detail="声音尚未批准")
+    project.status = "preview_ready"
+    project.expected_version += 1
+    await db.commit()
+    return {"id": project.id, "status": "queued", "recovery_stage": "preview"}
 
 
