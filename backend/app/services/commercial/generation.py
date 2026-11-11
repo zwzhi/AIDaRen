@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models_commercial import CvGenerationAttempt
 from app.services.providers.atlas.h3_reference import (
+    H3VideoAdapter,
+    PreviewTask,
     ProviderRequestError,
     SubmitOutcomeUnknownError,
     poll_prediction,
@@ -47,6 +49,23 @@ async def _release_reservation_safe(db: AsyncSession, attempt: CvGenerationAttem
         logger.exception("release reservation failed attempt=%s", attempt.id)
 
 _POLL_BACKOFF_SEC = 8.0
+
+
+async def submit_preview_generation(
+    frozen_revision: dict[str, Any],
+    *,
+    adapter: H3VideoAdapter | None = None,
+) -> PreviewTask:
+    """提交可恢复的 Mock/沙箱预览任务。
+
+    该入口不经过真实提交函数，除非调用方显式传入已验证的生产适配器。
+    同一冻结版本由适配器按 hash 幂等复用任务。
+    """
+    selected = adapter or H3VideoAdapter(mode="mock")
+    result = selected.submit_preview(frozen_revision)
+    if hasattr(result, "__await__"):
+        result = await result
+    return result
 
 
 async def _transition_task_to_poll(db: AsyncSession, task: Any, prediction_id: str) -> None:

@@ -9,7 +9,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.schemas_commercial import VideoGenerationInput
-from app.services.providers.atlas.h3_reference import H3Capabilities, build_h3_request
+from app.services.providers.atlas.h3_reference import (
+    H3Capabilities,
+    PreviewInputError,
+    build_h3_preview_request,
+    build_h3_request,
+)
 
 
 class RequestBuildError(Exception):
@@ -47,3 +52,17 @@ def build_generation_input(params: dict[str, Any]) -> VideoGenerationInput:
 def build_request_body(params: dict[str, Any], caps: H3Capabilities) -> dict[str, Any]:
     """计划参数 → 上游请求体（含能力档案校验；报价与生成共用）。"""
     return build_h3_request(build_generation_input(params), caps)
+
+
+def build_preview_request(params: dict[str, Any], caps: H3Capabilities) -> dict[str, Any]:
+    """冻结脚本/锚帧/声音/字幕版本 → H3 低清预览请求。
+
+    预览专用构造路径强制 9:16 与最低已验证分辨率默认值，并保留锚帧
+    顺序映射及冻结版本 hash，避免报价或正式渲染路径静默改写输入。
+    """
+    try:
+        return build_h3_preview_request(dict(params), caps)
+    except PreviewInputError:
+        raise
+    except KeyError as exc:
+        raise RequestBuildError("PREVIEW_PARAM_MISSING", f"预览缺少冻结版本参数：{exc}") from exc
