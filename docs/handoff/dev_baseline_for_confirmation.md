@@ -32,7 +32,7 @@ cd admin && npm run dev         # http://localhost:5174
 ## 体验入口
 
 - 登录：http://localhost:5173/auth（登录后默认进入 **模板库**）
-- 演示账号：`demo@printfilm-demo.com / Demo2026x`（管理员）；`viewer@printfilm-demo.com / Viewer2026x`（普通用户，验证权限）。**正式使用前须更换**
+- 演示账号：`demo@printfilm-demo.com / （演示口令A·本地开发库专用）`（管理员）；`viewer@printfilm-demo.com / （演示口令B·本地开发库专用）`（普通用户，验证权限）。**正式使用前须更换**
 - 六页面：模板库 / 达人库 / 商品库 / 制作工作台 / 任务与作品 / 设置与费用
 - Mock 说明：全链路为本地模拟供应商（解析/文案/报价/生成显著标注"模拟"），$ 数字均为演示池（scope=mock），不构成真实付费授权
 
