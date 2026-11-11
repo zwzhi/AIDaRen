@@ -39,6 +39,7 @@ import { CommercialSettingsPage, CommercialTasksPage } from './features/commerci
 import CommercialStudioPage from './features/commercial/studioPage'
 import CommercialTemplatesPage from './features/commercial/templatesPage'
 import TemplateVersionDetail from './features/commercial/templateDetail'
+import CommercialReplicationPage from './features/commercial/replicationPages'
 import { setWorkspaceTeam, subscribeWorkspace, workspaceScope } from './features/teams/workspaceScope'
 import TeamPage from './features/teams/TeamPage'
 import { TeamPreviewProvider } from './features/teams/TeamPreviewContext'
@@ -76,6 +77,7 @@ export default function App() {
         <Route path="/commercial/actors" element={<RequireAuth><CommercialActorsPage /></RequireAuth>} />
         <Route path="/commercial/products" element={<RequireAuth><CommercialProductsPage /></RequireAuth>} />
         <Route path="/commercial/studio" element={<RequireAuth><CommercialStudioPage /></RequireAuth>} />
+        <Route path="/commercial/replications" element={<RequireAuth><CommercialReplicationPage /></RequireAuth>} />
         <Route path="/commercial/tasks" element={<RequireAuth><CommercialTasksPage /></RequireAuth>} />
         <Route path="/commercial/settings" element={<RequireAuth><CommercialSettingsPage /></RequireAuth>} />
         <Route path="/assets" element={<AssetLibraryPage />} />
