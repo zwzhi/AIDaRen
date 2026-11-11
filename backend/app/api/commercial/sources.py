@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -31,6 +32,7 @@ from app.services.commercial.storage import (
 )
 
 router = APIRouter()
+_ANALYSIS_LOCKS: dict[str, asyncio.Lock] = {}
 
 
 def _parse_authorized_until(raw: str | None) -> datetime | None:
@@ -217,6 +219,9 @@ async def analyze_source(
         db, source=source, model_id=model_id, requested_by=user.id,
     )
     mock = mock_provider.mock_enabled()
+    if run.status == "completed":
+        return {"analysis_run_id": run.id, "status": run.status, "mock": mock,
+                "error": run.error}
     if mock:
         async def analyzer(_request):
             return mock_provider.mock_analyze_payload(source.duration_ms or 30_000)
@@ -257,7 +262,11 @@ async def analyze_source(
                 "transcript": result.transcript, "uncertainties": result.uncertainties,
             }
 
-    run = await run_analysis(db, run=run, analyzer=analyzer)
+    lock = _ANALYSIS_LOCKS.setdefault(run.cache_key, asyncio.Lock())
+    async with lock:
+        await db.refresh(run)
+        if run.status == "pending":
+            run = await run_analysis(db, run=run, analyzer=analyzer)
     await db.commit()
     return {"analysis_run_id": run.id, "status": run.status, "mock": mock,
             "error": run.error}

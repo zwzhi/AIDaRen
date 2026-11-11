@@ -18,12 +18,12 @@ PROMPT_VERSION = "1"
 
 def analysis_cache_key(
     *, team_id: int | None, source_sha256: str, model_id: str,
-    prompt_version: str = PROMPT_VERSION, settings_hash: str = "",
+    prompt_version: str = PROMPT_VERSION, settings_hash: str = "", requested_by: int | None = None,
     schema_version: str = SCHEMA_VERSION,
 ) -> str:
     """缓存键至少含 team+源哈希+模型+提示词版本+设置+Schema 版本（§5.4）。"""
     raw = "|".join([
-        f"team={team_id if team_id is not None else 'shared'}",
+        f"team={team_id if team_id is not None else 'user:' + str(requested_by or '')}",
         f"sha={source_sha256}", f"model={model_id}",
         f"prompt={prompt_version}", f"settings={settings_hash}",
         f"schema={schema_version}",
@@ -40,7 +40,7 @@ async def get_or_create_analysis_run(
     sha = asset.sha256 if asset else ""
     key = analysis_cache_key(
         team_id=source.team_id, source_sha256=sha, model_id=model_id,
-        settings_hash=settings_hash,
+        settings_hash=settings_hash, requested_by=requested_by,
     )
     existing = (await db.execute(
         select(CvAnalysisRun).where(CvAnalysisRun.cache_key == key)

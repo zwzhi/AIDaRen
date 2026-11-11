@@ -12,7 +12,7 @@ export type CommercialAsset = {
 export type AnalysisOut = { analysis_run_id: number; status: string; mock: boolean; error?: string | null }
 export type AnalysisResult = { id: number; status: string; error?: string | null; result: { shots: Shot[] } | null }
 export type Shot = {
-  shot_id: string; start_ms: number; end_ms: number
+  shot_key?: string; shot_id?: string; start_ms: number; end_ms: number
   observation?: string; inference?: string; uncertainty?: string; dialogue_template?: string; action_template?: string
   dialogue?: string; action?: string; target_duration_ms?: number
 }
@@ -143,7 +143,7 @@ export const commercialApi = {
   saveProviderSettings: (payload: Record<string, unknown>) =>
     request('/api/admin/settings/models', { method: 'PATCH', body: JSON.stringify(payload) }),
   setBudget: (totalUsd: string, scope: string = 'mock') =>
-    request<{ pool_id: number; total_usd: string; scope: string; paused: boolean }>('/api/commercial/budget', {
+    request<{ pool_id: number; total_usd: string; scope?: string; paused: boolean }>('/api/commercial/budget', {
       method: 'POST', body: JSON.stringify({ total_usd: totalUsd, scope }),
     }),
 }

@@ -11,10 +11,12 @@ import uuid
 from decimal import Decimal
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
@@ -112,7 +114,8 @@ async def _ensure_team_writer(db: AsyncSession, obj, user: User) -> None:
     if team_id is None and getattr(obj, "production_id", None) is not None:
         production = await db.get(CvProduction, int(obj.production_id))
         team_id = getattr(production, "team_id", None) if production else None
-        if production and await _can_read_production(db, production, user):
+        if production and (getattr(production, "created_by", None) == user.id or
+                           await _has_team_access(db, getattr(production, "team_id", None), user)):
             return
     if team_id is not None and await _has_team_access(db, team_id, user):
         return
@@ -275,6 +278,9 @@ async def publish_template_version(
         )
     except TemplatePublishError as exc:
         raise HTTPException(status_code=409, detail=exc.message) from exc
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="模板版本已被其他请求发布，请刷新后重试") from exc
     await db.commit()
     return {"template_id": template.id, "version_id": version.id, "version": version.version}
 
@@ -377,7 +383,7 @@ async def bind_voice(
     actor_id: int, body: VoiceBindBody,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    from datetime import datetime
+    from datetime import datetime, timezone
 
     from app.models_commercial import CvActor, CvVoiceProfile
 
@@ -387,10 +393,26 @@ async def bind_voice(
     await _ensure_team_writer(db, actor, user)
     asset = await db.get(CvMediaAsset, body.audio_asset_id)
     if asset is None or asset.source_role != "owned_voice_reference":
-        raise HTTPException(status_code=400, detail="音色样本必须来自已上传的授权音色素材")
+        raise HTTPException(status_code=422, detail="音色样本必须来自已上传的授权音色素材")
+    try:
+        await ensure_asset_readable(db, asset, user.id, is_admin=(user.role == "admin"))
+    except CommercialAssetPolicyError as exc:
+        raise HTTPException(status_code=422, detail="无权使用该音色素材") from exc
+    if asset.rights_status in {"revoked", "expired"}:
+        raise HTTPException(status_code=422, detail="音色素材授权已失效")
+    try:
+        authorized_until = datetime.fromisoformat(body.authorized_until) if body.authorized_until else asset.authorized_until
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail="授权截止时间格式无效（需 ISO 8601）") from exc
+    if authorized_until is not None and authorized_until.tzinfo is None:
+        authorized_until = authorized_until.replace(tzinfo=timezone.utc)
+    if asset.authorized_until and authorized_until and authorized_until > asset.authorized_until:
+        raise HTTPException(status_code=422, detail="绑定授权期限不能超过素材授权期限")
+    if authorized_until is not None and authorized_until <= datetime.now(timezone.utc):
+        raise HTTPException(status_code=422, detail="授权截止时间必须晚于当前时间")
     voice = CvVoiceProfile(
         actor_id=actor.id, audio_asset_id=asset.id,
-        authorized_until=datetime.fromisoformat(body.authorized_until) if body.authorized_until else None,
+        authorized_until=authorized_until,
     )
     db.add(voice)
     await db.commit()
@@ -565,10 +587,14 @@ async def adapt_production(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
     production = await _get_production(db, production_id, user)
+    await _ensure_team_writer(db, production, user)
+    if production.status not in {"draft", "adapted"}:
+        raise HTTPException(status_code=409, detail="当前作品状态不允许重新适配文案")
     _require_mock_or_verified()
     template_version = await db.get(CvTemplateVersion, production.template_version_id)
     product = await db.get(CvProductVersion, production.product_version_id)
     goal = (body.marketing_goal if body and body.marketing_goal else production.marketing_goal) or "种草推荐"
+    production.marketing_goal = goal
 
     if mock_provider.mock_enabled():
         async def adaptor(request: dict) -> dict:
@@ -613,6 +639,9 @@ async def plan_production(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
     production = await _get_production(db, production_id, user)
+    await _ensure_team_writer(db, production, user)
+    if production.status not in {"adapted", "planned"}:
+        raise HTTPException(status_code=409, detail="请先完成文案适配，再编译生成计划")
     plan = dict(production.plan_json or {})
     shots = plan.get("shots") or []
     if not shots:
@@ -691,6 +720,7 @@ async def quote_unit(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
     production = await _get_production(db, production_id, user)
+    await _ensure_team_writer(db, production, user)
     _require_mock_or_verified()
     plan = dict(production.plan_json or {})
     units = plan.get("units") or []
@@ -707,6 +737,18 @@ async def quote_unit(
         await db.commit()  # 报价必须落库，生成请求才能跨会话引用
     except RequestBuildError as exc:
         raise HTTPException(status_code=422, detail=exc.message) from exc
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="上游报价请求超时") from exc
+    except httpx.ConnectError as exc:
+        raise HTTPException(status_code=503, detail="上游报价服务不可用") from exc
+    except httpx.RequestError as exc:
+        raise HTTPException(status_code=502, detail="上游报价请求失败") from exc
+    except Exception as exc:
+        from app.services.providers.atlas.pricing import ProviderRequestError
+        if isinstance(exc, ProviderRequestError):
+            code = 503 if exc.status_code >= 500 else 502
+            raise HTTPException(status_code=code, detail="上游报价服务返回错误") from exc
+        raise
     return {
         "quote_id": quote.id, "quote_key": quote.quote_key,
         "amount": str(quote.estimated_amount), "currency": quote.currency,
@@ -732,6 +774,7 @@ async def generate_unit(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
     production = await _get_production(db, production_id, user)
+    await _ensure_team_writer(db, production, user)
     _require_mock_or_verified()
     plan = dict(production.plan_json or {})
     unit = next((u for u in plan.get("units") or [] if u.get("unit_key") == body.unit_key), None)
@@ -762,6 +805,14 @@ async def generate_unit(
     from datetime import UTC, datetime
 
     from app.models_tasks import TaskRun
+
+    # Serialize task creation for one attempt. This closes the replay window
+    # between the idempotent approval lookup and the TaskRun lookup.
+    await db.scalar(
+        select(CvGenerationAttempt)
+        .where(CvGenerationAttempt.id == approval.attempt_id)
+        .with_for_update()
+    )
 
     async def _find_existing_task(attempt_id: int) -> TaskRun | None:
         rows = (await db.execute(
@@ -898,7 +949,12 @@ async def get_production(
     # 费用模拟标记来自尝试证据（MOCK- 前缀），不随当前系统模式变化；
     # 无尝试时退回当前配置（此时无历史事实可依）。
     attempt_mock_flags = [str(a.provider_prediction_id or "").startswith("MOCK-") for a in attempts]
-    costs_mock = all(attempt_mock_flags) if attempt_mock_flags else mock_provider.mock_enabled()
+    attempts_with_provider_id = [a for a in attempts if a.provider_prediction_id]
+    costs_mock = (
+        all(attempt_mock_flags)
+        if attempts and len(attempts_with_provider_id) == len(attempts)
+        else mock_provider.mock_enabled()
+    )
     latest_export = (await db.execute(
         select(CvExport).where(CvExport.production_id == production.id)
         .order_by(CvExport.id.desc()).limit(1)
@@ -951,7 +1007,12 @@ async def review_attempt(
     await _ensure_team_writer(db, attempt, user)
     normalized: dict[str, object] = {}
     for dim, verdict in body.dimensions.items():
-        normalized[dim] = tuple(verdict) if isinstance(verdict, list) else verdict
+        if isinstance(verdict, list):
+            if len(verdict) != 2 or not all(isinstance(item, str) for item in verdict):
+                raise HTTPException(status_code=422, detail="审核维度列表必须是 [结论, 原因]")
+            normalized[dim] = tuple(verdict)
+        else:
+            normalized[dim] = verdict
     decision = await record_review(
         db, attempt, reviewer_id=user.id, dimensions=normalized,
         speech_required=body.speech_required,
@@ -984,6 +1045,13 @@ async def preview_attempt(
 class ComposeSelection(BaseModel):
     attempt_id: int
     ranges: list[list[int]]  # [[start_ms, end_ms], ...]
+
+    @model_validator(mode="after")
+    def validate_ranges(self):
+        for span in self.ranges:
+            if len(span) != 2 or any(isinstance(x, bool) for x in span) or span[0] < 0 or span[1] <= span[0]:
+                raise ValueError("ranges 必须是非负且 start_ms < end_ms 的区间")
+        return self
 
 
 class ComposeBody(BaseModel):
@@ -1060,6 +1128,7 @@ async def compose(
     from app.services.commercial.compose import build_subtitle_draft, compose_production
 
     production = await _get_production(db, production_id, user)
+    await _ensure_team_writer(db, production, user)
     pairs = []
     shots_meta = []
     timeline_cursor = 0  # 成片全局时间轴（秒表从 0 起拼接）
@@ -1231,7 +1300,7 @@ async def download_export(
 
 # ---------------------------------------------------------------- 预算（管理）
 class BudgetPoolBody(BaseModel):
-    total_usd: Decimal
+    total_usd: Decimal = Field(ge=0)
     scope: str = "mock"  # mock=演示预算；real=真实付费授权（互不继承）
 
 
@@ -1249,6 +1318,6 @@ async def set_budget(
     )
     pool.total_amount = body.total_usd
     await db.commit()
-    return {"pool_id": pool.id, "total_usd": str(pool.total_amount),
+    return {"pool_id": pool.id, "scope": pool.scope, "total_usd": str(pool.total_amount),
             "reserved_usd": str(pool.reserved_amount), "settled_usd": str(pool.settled_amount),
             "paused": pool.paused}

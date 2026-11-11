@@ -170,7 +170,7 @@ export default function SiteNav({ active }: Props) {
     setAccountOpen(false)
     selectTeam(null)
     window.dispatchEvent(new Event(USER_UPDATED_EVENT))
-    nav('/auth')  // 商业项目：退出到登录页，不回到上游营销首页
+    nav(COMMERCIAL_PROJECT ? '/auth' : '/')
   }
 
   /** 顶栏使用文字导航，展开菜单补充图标；所有入口沿用同一份路由配置。 */

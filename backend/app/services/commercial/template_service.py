@@ -55,6 +55,7 @@ async def publish_template(
     - 同版本号已存在（重复提交）→ 冲突；
     - 发布后模板 current_version 前移；历史版本保持 published 不改写。
     """
+    await db.refresh(template, with_for_update=True)
     _validate_draft(draft_payload, source_duration_ms=source_duration_ms)
     next_version = int(template.current_version or 0) + 1
     if int(expected_version) != next_version:

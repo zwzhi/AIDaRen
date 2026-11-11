@@ -8,6 +8,7 @@ import BrandMark from '../components/BrandMark'
 import Button from '../components/ui/Button'
 import { useI18n } from '../i18n'
 import { isValidAuthPassword, isValidEmailInput } from '../lib/validateAuthForm'
+import LanguageSwitch from '../components/layout/LanguageSwitch'
 
 type AuthMode = 'login' | 'register' | 'forgot' | 'reset'
 
@@ -171,7 +172,7 @@ export default function AuthPage() {
       <div className="auth-panel">
         <div className="auth-panel-top">
           <BrandMark />
-          {/* 语言切换在商业模式下隐藏 */}
+          {!COMMERCIAL_PROJECT && <LanguageSwitch />}
         </div>
         <h1>{title}</h1>
         <form onSubmit={onSubmit} className="stack" noValidate>

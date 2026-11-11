@@ -59,6 +59,7 @@ export function CommercialTasksPage() {
   const [exportDetail, setExportDetail] = useState<{ srt_content: string | null; subtitled_path: string | null } | null>(null)
   const [srtDraft, setSrtDraft] = useState('')
   const [burnMsg, setBurnMsg] = useState('')
+  const [burning, setBurning] = useState(false)
   const [loading, setLoading] = useState(true)
 
     // 在途任务自动轮询（20s，只查询不重新生成）
@@ -134,26 +135,33 @@ const refreshList = useCallback(() => {
 
   const download = async (variant: 'master' | 'subtitled') => {
     if (!exportId) return
-    const q = variant === 'subtitled' ? '?variant=subtitled' : ''
-    const resp = await fetch(`${API_BASE}/api/commercial/exports/${exportId}/download${q}`, {
-      headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
-    })
-    if (!resp.ok) { setMsg('下载失败'); return }
-    const blob = await resp.blob()
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(blob)
-    a.download = `export-${exportId}${variant === 'subtitled' ? '-subtitled' : ''}.mp4`
-    a.click(); URL.revokeObjectURL(a.href)
+    try {
+      const q = variant === 'subtitled' ? '?variant=subtitled' : ''
+      const resp = await fetch(`${API_BASE}/api/commercial/exports/${exportId}/download${q}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` },
+      })
+      if (!resp.ok) { setMsg('下载失败，请检查网络后重试'); return }
+      const blob = await resp.blob()
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `export-${exportId}${variant === 'subtitled' ? '-subtitled' : ''}.mp4`
+      a.click(); URL.revokeObjectURL(a.href)
+    } catch (e) {
+      setMsg(e instanceof Error ? `下载失败，请检查网络后重试：${e.message}` : '下载失败，请检查网络后重试')
+    }
   }
 
   const burn = async () => {
+    if (burning) return
     if (!exportId || !srtDraft.trim()) { setBurnMsg('请先校对字幕草稿'); return }
+    setBurning(true)
     setBurnMsg('烧录中…')
     try {
       await commercialApi.burnExport(exportId, srtDraft)
       const ex = await commercialApi.getExport(exportId)
       setExportDetail(ex); setSubtitled(Boolean(ex.subtitled_path)); setBurnMsg('烧录完成，母版未改动')
     } catch (e) { setBurnMsg(e instanceof Error ? e.message : String(e)) }
+    finally { setBurning(false) }
   }
 
   return (
@@ -238,7 +246,7 @@ const refreshList = useCallback(() => {
                 <label className="cv-field" style={{ margin: 0 }}>字幕校对
                   <textarea className="cv-textarea" value={srtDraft} onChange={e => setSrtDraft(e.target.value)} />
                 </label>
-                <Button variant="outline" size="sm" onClick={burn}>校对完成并烧录字幕</Button>
+                <Button variant="outline" size="sm" disabled={burning} onClick={burn}>{burning ? '烧录中…' : '校对完成并烧录字幕'}</Button>
                 {burnMsg && <span className="pf-muted" style={{ fontSize: 12, marginLeft: 8 }}>{burnMsg}</span>}
               </div>}
               <p className="pf-muted" style={{ fontSize: 12, marginTop: 8 }}>字幕为未校对草稿；校对后烧录只生成独立副本，母版不变。</p>
@@ -254,17 +262,21 @@ const refreshList = useCallback(() => {
 export function CommercialSettingsPage() {
   const [total, setTotal] = useState('')
   const [msg, setMsg] = useState('')
-  const [pool, setPool] = useState<{ total_usd: string; scope: string; paused: boolean } | null>(null)
+  const [pool, setPool] = useState<{ total_usd: string; scope?: string; paused: boolean } | null>(null)
   const [apiKey, setApiKey] = useState('')
   const [geminiId, setGeminiId] = useState('')
   const [h3Id, setH3Id] = useState('')
   const [provider, setProvider] = useState<{ has_atlas_api_key: boolean; gemini_analysis_model_id: string; h3_developer_reference_model_id: string; commercial_verified_models: string; commercial_mock_mode: boolean; commercial_paid_execution_enabled: boolean } | null>(null)
+  const [providerForbidden, setProviderForbidden] = useState(false)
   const [providerMsg, setProviderMsg] = useState('')
 
   useEffect(() => {
     commercialApi.getProviderSettings().then(s => {
       setProvider(s); setGeminiId(s.gemini_analysis_model_id || ''); setH3Id(s.h3_developer_reference_model_id || '')
-    }).catch(() => setProvider(null))
+    }).catch((e: unknown) => {
+      setProvider(null)
+      setProviderForbidden(typeof e === 'object' && e !== null && 'status' in e && e.status === 403)
+    })
   }, [])
 
   const setBudget = async () => {
@@ -292,7 +304,9 @@ export function CommercialSettingsPage() {
       <div style={{ display: 'grid', gap: 16, gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))' }}>
         <div className="pf-card" style={{ padding: 16 }}>
           <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>安全配置（管理员）</h3>
-          {provider == null
+          {providerForbidden
+            ? <p className="pf-muted">需要管理员权限查看和编辑。</p>
+            : provider == null
             ? <p className="pf-muted">需要管理员权限查看。</p>
             : <>
                 <div className="cv-field"><label>Atlas API 密钥（只写不读）</label>
@@ -310,20 +324,22 @@ export function CommercialSettingsPage() {
         <div className="pf-card" style={{ padding: 16 }}>
           <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>能力状态</h3>
           <ul style={{ fontSize: 13, color: 'var(--pf-muted)', margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
-            <li>密钥：{provider?.has_atlas_api_key ? '已配置（不显示）' : '未配置'}</li>
-            <li>已验证能力清单：{provider?.commercial_verified_models || '（空——未经真实契约验证，付费执行保持阻断）'}</li>
-            <li>模式：{provider == null ? '运行模式未确认（需管理员权限）' : (provider.commercial_mock_mode ? '开发模拟（mock）' : '真实')} · 付费总开关：{provider == null ? '未确认' : (provider.commercial_paid_execution_enabled ? '开' : '关（默认）')}</li>
+            <li>密钥：{providerForbidden ? '需管理员权限确认' : provider == null ? '运行状态未确认' : provider.has_atlas_api_key ? '已配置（不显示）' : '未配置'}</li>
+            <li>已验证能力清单：{providerForbidden ? '需管理员权限确认' : provider?.commercial_verified_models || '（空——未经真实契约验证，付费执行保持阻断）'}</li>
+            <li>模式：{providerForbidden ? '运行模式未确认（需管理员权限）' : provider == null ? '运行模式未确认（请求失败）' : (provider.commercial_mock_mode ? '开发模拟（mock）' : '真实')} · 付费总开关：{providerForbidden || provider == null ? '未确认' : (provider.commercial_paid_execution_enabled ? '开' : '关（默认）')}</li>
           </ul>
         </div>
 
         <div className="pf-card" style={{ padding: 16 }}>
           <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>演示预算（mock 池）</h3>
           <p className="pf-muted" style={{ fontSize: 12, margin: '0 0 8px' }}>演示预算不构成真实付费授权；真实模式使用独立 real 池，需另行初始化。</p>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input className="cv-input" style={{ width: 160 }} placeholder="USD，如 50.00" value={total} onChange={e => setTotal(e.target.value)} />
-            <Button variant="lime" onClick={setBudget}>保存</Button>
-          </div>
-          {pool && <p className="pf-muted" style={{ fontSize: 12, marginTop: 8 }}>当前：${pool.total_usd}（scope={pool.scope}）{pool.paused ? ' · 已暂停' : ''}</p>}
+          {providerForbidden
+            ? <p className="pf-muted" style={{ fontSize: 12 }}>需要管理员权限查看和编辑预算。</p>
+            : <div style={{ display: 'flex', gap: 8 }}>
+                <input className="cv-input" style={{ width: 160 }} placeholder="USD，如 50.00" value={total} onChange={e => setTotal(e.target.value)} />
+                <Button variant="lime" onClick={setBudget}>保存</Button>
+              </div>}
+          {pool && <p className="pf-muted" style={{ fontSize: 12, marginTop: 8 }}>当前：${pool.total_usd}{pool.scope ? `（scope=${pool.scope}）` : ''}{pool.paused ? ' · 已暂停' : ''}</p>}
           {msg && <p className="pf-muted" style={{ fontSize: 12, marginTop: 4 }}>{msg}</p>}
         </div>
 

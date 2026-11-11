@@ -238,7 +238,7 @@ type ProductionItem = {
       )}
 
       {productionId == null && (
-        <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}> id="cv-section-adapt"
+        <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
         <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>① 选择模板与素材</h3>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <div className="cv-field" style={{ margin: 0, minWidth: 220 }}>
@@ -291,7 +291,7 @@ type ProductionItem = {
 
       {/* ② 文案与分镜 */}
       {productionId && detail && (
-        <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
+        <div id="cv-section-adapt" className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
             <h3 style={{ margin: 0, fontSize: 15 }}>② 文案与分镜（作品 #{productionId} · {detail.status}）</h3>
             <input className="cv-input" style={{ width: 180 }} placeholder="营销目标" value={marketingGoal} onChange={e => setMarketingGoal(e.target.value)} /> <Button variant="outline" size="sm" onClick={step}>执行文案适配 + 编译生成计划</Button>
@@ -302,10 +302,10 @@ type ProductionItem = {
               {detail.plan.pending_review.length} 处新内容待人工确认（不在审核卖点内）。
             </p>
           ) : null}
-          {(detail.plan?.shots || []).map(s => (
-            <div key={s.shot_id} className="cv-shot">
+          {(detail.plan?.shots || []).map((s, index) => (
+            <div key={s.shot_key || `shot-${index + 1}`} className="cv-shot">
               <div className="cv-shot-head" style={{ cursor: 'default' }}>
-                <strong style={{ minWidth: 36 }}>{s.shot_id}</strong>
+                <strong style={{ minWidth: 36 }}>{s.shot_key || `shot-${index + 1}`}</strong>
                 <span className="pf-muted" style={{ fontSize: 12 }}>目标 {sec(s.target_duration_ms ?? (s.end_ms - s.start_ms))}</span>
                 <span style={{ fontSize: 13, flex: 1, minWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {s.dialogue || '—'}
@@ -342,7 +342,14 @@ type ProductionItem = {
                 <RedoEntry unitKey={u.unit_key} productionId={productionId}
                   attempts={detail?.attempts || []} dialogueOverride={redoDialogue[u.unit_key]}
                   onDialogueChange={v => setRedoDialogue(prev => ({ ...prev, [u.unit_key]: v }))}
-                  onDone={() => refreshDetail(productionId)} />
+                  onDone={() => {
+                    setRedoDialogue(prev => {
+                      const next = { ...prev }
+                      delete next[u.unit_key]
+                      return next
+                    })
+                    refreshDetail(productionId)
+                  }} />
               </div>
             </div>
           ))}

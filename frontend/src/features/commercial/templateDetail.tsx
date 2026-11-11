@@ -2,7 +2,7 @@
  * 模板版本详情：完整结构（含内部字段名）只读展示 + 使用入口。
  * 数据来自 GET /api/commercial/templates/{versionId}（冻结快照）。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import Button from '../../components/ui/Button'
 import CommercialLayout, { CommercialPageHead, MockModeNote } from './CommercialLayout'
@@ -31,6 +31,7 @@ export default function TemplateVersionDetail() {
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
   const [draftShots, setDraftShots] = useState<Shot[]>([])
+  const editSnapshotRef = useRef<Shot[] | null>(null)
 
   useEffect(() => {
     if (!versionId) return
@@ -121,7 +122,16 @@ export default function TemplateVersionDetail() {
                 原片复查：{detail.source_available ? '可用' : '不可用（源已删除或撤销）'}
               </span>
               <span style={{ flex: 1 }} />
-              <Button variant="outline" size="sm" onClick={() => setEditing(v => !v)}>{editing ? '取消编辑' : '编辑并发布 V2'}</Button>
+              <Button variant="outline" size="sm" onClick={() => {
+                if (editing) {
+                  setDraftShots(editSnapshotRef.current ?? draftShots)
+                  setEditing(false)
+                  setMessage('')
+                } else {
+                  editSnapshotRef.current = draftShots.map(shot => ({ ...shot }))
+                  setEditing(true)
+                }
+              }}>{editing ? '取消编辑' : '编辑并发布 V2'}</Button>
               <Button variant="lime" size="sm" to={`/commercial/studio?template=${detail.version_id}`}>使用此版本</Button>
             </div>
           </div>
