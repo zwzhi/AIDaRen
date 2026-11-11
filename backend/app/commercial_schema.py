@@ -320,6 +320,10 @@ async def apply_commercial_schema_patches(conn) -> None:
         "ON cv_cost_quotes(replication_project_id, status)"
     ))
     await conn.execute(text(
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_cv_budget_pool_name_scope "
+        "ON cv_budget_pools(name, scope)"
+    ))
+    await conn.execute(text(
         "ALTER TABLE cv_budget_pools ALTER COLUMN scope SET DEFAULT 'mock'"
     ))
     await conn.execute(text(
