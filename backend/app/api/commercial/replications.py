@@ -35,6 +35,41 @@ from app.services.providers.atlas.gemini import GeminiAdapter
 router = APIRouter()
 
 
+class ReplicationCreateBody(BaseModel):
+    production_id: int = Field(gt=0)
+    mode: str = Field(default="structural_rewrite", pattern="^(structural_rewrite|high_fidelity)$")
+    route_reason: str = ""
+
+
+@router.post("/replications", summary="创建复刻项目")
+async def create_replication(
+    body: ReplicationCreateBody,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    production = await db.get(CvProduction, body.production_id)
+    if production is None:
+        raise HTTPException(status_code=404, detail="作品不存在")
+    if (user.role or "user") != "admin" and production.created_by != user.id:
+        raise HTTPException(status_code=403, detail="无权创建该复刻项目")
+    existing = await db.scalar(
+        select(CvReplicationProject).where(CvReplicationProject.production_id == production.id)
+    )
+    if existing is not None:
+        return {"id": existing.id, "production_id": existing.production_id,
+                "mode": existing.mode, "status": existing.status, "reused": True}
+    project = CvReplicationProject(
+        production_id=production.id,
+        mode=body.mode,
+        route_reason=body.route_reason,
+        created_by=user.id,
+    )
+    db.add(project)
+    await db.commit()
+    return {"id": project.id, "production_id": project.production_id,
+            "mode": project.mode, "status": project.status, "reused": False}
+
+
 class AnalyzeBody(BaseModel):
     fixture: dict[str, Any] | None = None
     duration_ms: int | None = Field(default=None, gt=0)
