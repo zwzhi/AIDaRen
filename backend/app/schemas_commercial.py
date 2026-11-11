@@ -132,3 +132,135 @@ class CostQuote:
     created_at: datetime | None = None
     expires_at: datetime | None = None
     provider_payload_redacted: dict[str, Any] = field(default_factory=dict)
+
+# ---------------------------------------------------------------------------
+# 复刻分析与脚本契约（Gemini fixture / API 共用）
+from enum import Enum
+
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
+
+
+class ProductPresence(str, Enum):
+    required = "required"
+    optional = "optional"
+    absent = "absent"
+    unknown = "unknown"
+
+
+class ShotGraphShot(BaseModel):
+    """一个可核对的 Shot Graph 节点。
+
+    ``start``/``end`` 是对外契约字段，兼容数据库及旧 Gemini 输出的
+    ``start_ms``/``end_ms`` 输入。所有时间均为毫秒。
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    shot_key: str = Field(min_length=1, max_length=96)
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    purpose: str = ""
+    camera: dict[str, Any] = Field(default_factory=dict)
+    composition: dict[str, Any] = Field(default_factory=dict)
+    action: dict[str, Any] = Field(default_factory=dict)
+    emotion: dict[str, Any] = Field(default_factory=dict)
+    product_presence: ProductPresence = ProductPresence.unknown
+    product_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    product_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    anchor_candidates: list[dict[str, Any]] = Field(default_factory=list)
+    source_span: dict[str, Any] = Field(default_factory=dict)
+    review_status: str = "approved"
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_legacy_time_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        value = dict(value)
+        if "start" not in value and "start_ms" in value:
+            value["start"] = value["start_ms"]
+        if "end" not in value and "end_ms" in value:
+            value["end"] = value["end_ms"]
+        for target, legacy in (
+            ("camera", "camera_json"),
+            ("composition", "composition_json"),
+            ("action", "action_json"),
+            ("emotion", "emotion_json"),
+            ("product_evidence", "product_evidence_json"),
+            ("anchor_candidates", "anchor_candidates_json"),
+            ("source_span", "source_span_json"),
+        ):
+            if target not in value and legacy in value:
+                value[target] = value[legacy]
+        return value
+
+    @model_validator(mode="after")
+    def _validate_time_and_review(self) -> "ShotGraphShot":
+        if self.end <= self.start:
+            raise ValueError("end must be greater than start")
+        if self.product_confidence < 0.7 or self.product_presence is ProductPresence.unknown:
+            self.review_status = "needs_human_review"
+        return self
+
+    @property
+    def start_ms(self) -> int:
+        return self.start
+
+    @property
+    def end_ms(self) -> int:
+        return self.end
+
+
+class ShotGraphPayload(BaseModel):
+    """Gemini 输出的版本化 Shot Graph。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    shots: list[ShotGraphShot] = Field(default_factory=list)
+    duration_ms: int = Field(default=0, ge=0)
+    source_id: int | None = None
+    schema_version: str = "1.0"
+    uncertainties: list[dict[str, Any]] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _validate_bounds(self) -> "ShotGraphPayload":
+        if self.shots:
+            maximum = max(shot.end for shot in self.shots)
+            if self.duration_ms <= 0:
+                self.duration_ms = maximum
+            if maximum > self.duration_ms:
+                raise ValueError("shot end exceeds duration_ms")
+            starts = [shot.start for shot in self.shots]
+            if starts != sorted(starts):
+                raise ValueError("shots must be ordered by start")
+        elif self.duration_ms <= 0:
+            raise ValueError("duration_ms must be positive when shots are empty")
+        return self
+
+
+class ScriptVersionPayload(BaseModel):
+    """单镜脚本版本契约，写入 ``CvScriptVersion.script_json``。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    mode: str = Field(default="structural_rewrite", pattern="^(structural_rewrite|high_fidelity)$")
+    dialogue: str = ""
+    visual_prompt: str = ""
+    action_prompt: str = ""
+    product_presence: ProductPresence = ProductPresence.unknown
+    claim_ids: list[str] = Field(default_factory=list)
+    duration_ms: int = Field(gt=0)
+    CTA: str = Field(default="", validation_alias=AliasChoices("CTA", "cta"))
+    shot_key: str = ""
+
+    @property
+    def cta(self) -> str:
+        return self.CTA
+
+
+class ScriptBatchPayload(BaseModel):
+    """脚本 API 可一次提交多个镜头版本。"""
+
+    mode: str = Field(default="structural_rewrite", pattern="^(structural_rewrite|high_fidelity)$")
+    scripts: list[ScriptVersionPayload] = Field(default_factory=list)
+

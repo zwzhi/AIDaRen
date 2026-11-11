@@ -139,3 +139,101 @@ async def analyze_video(
         if resp.status_code >= 400:
             raise ProviderRequestError(resp.status_code, resp.text[:500])
         return parse_analysis_response(resp.json(), request)
+
+# ---------------------------------------------------------------------------
+# Fixture-first structured adapter for replication workflows
+from collections.abc import Mapping
+
+from app.schemas_commercial import ScriptVersionPayload, ShotGraphPayload
+
+
+@dataclass(frozen=True)
+class GeminiScriptRequest:
+    mode: str
+    shot: Mapping[str, Any]
+    catalog_claims: tuple[Mapping[str, Any], ...] = ()
+    locked_duration_ms: int | None = None
+    target_duration_ms: int | None = None
+
+
+class GeminiAdapter:
+    """Deterministic Gemini contract adapter used by tests and mock mode.
+
+    This adapter intentionally has no network fallback. Production callers that
+    need the paid Gemini endpoint continue to use :func:`analyze_video` above
+    after capability and budget gates have passed.
+    """
+
+    def __init__(self, fixture: Mapping[str, Any] | None = None) -> None:
+        self.fixture = dict(fixture or {})
+
+    @classmethod
+    def from_fixture(cls, fixture: Mapping[str, Any]) -> "GeminiAdapter":
+        return cls(fixture)
+
+    def analyze_video(self, request: Any) -> ShotGraphPayload:
+        data = dict(self.fixture)
+        if not data:
+            duration = int(_request_value(request, "duration_ms", 1_000) or 1_000)
+            data = {
+                "duration_ms": duration,
+                "shots": [{
+                    "shot_key": "shot-1", "start": 0, "end": duration,
+                    "purpose": "main", "product_presence": "unknown",
+                    "product_confidence": 0.0,
+                    "product_evidence": [], "anchor_candidates": [],
+                    "source_span": {"start": 0, "end": duration},
+                }],
+            }
+        data["duration_ms"] = int(
+            data.get("duration_ms")
+            or _request_value(request, "source_duration_ms", 0)
+            or _request_value(request, "duration_ms", 0)
+        )
+        normalized: list[dict[str, Any]] = []
+        for index, raw in enumerate(data.get("shots") or [], 1):
+            item = dict(raw)
+            item.setdefault("shot_key", item.get("shot_id") or f"shot-{index}")
+            if "start" not in item:
+                item["start"] = item.get("start_ms", 0)
+            if "end" not in item:
+                item["end"] = item.get("end_ms", item["start"] + 1)
+            normalized.append(item)
+        data["shots"] = normalized
+        return ShotGraphPayload.model_validate(data)
+
+    def adapt_scripts(self, request: GeminiScriptRequest | Mapping[str, Any]) -> list[ScriptVersionPayload]:
+        if self.fixture.get("scripts"):
+            return [ScriptVersionPayload.model_validate(item) for item in self.fixture["scripts"]]
+        mode = str(_request_value(request, "mode", "structural_rewrite"))
+        shot = dict(_request_value(request, "shot", {}) or {})
+        catalog = list(_request_value(request, "catalog_claims", ()) or ())
+        claim = next((dict(c) for c in catalog if c.get("approved", True)), None)
+        claim_ids = [str(claim["claim_id"])] if claim and claim.get("claim_id") else []
+        dialogue = str(claim.get("text") or "") if claim else ""
+        locked = _request_value(request, "locked_duration_ms", None)
+        target = _request_value(request, "target_duration_ms", None)
+        duration = int(locked or target or shot.get("end", shot.get("end_ms", 1_000)) - shot.get("start", shot.get("start_ms", 0)))
+        return [ScriptVersionPayload(
+            mode=mode,
+            dialogue=dialogue,
+            visual_prompt=str(shot.get("visual_prompt") or shot.get("purpose") or ""),
+            action_prompt=str(shot.get("action_prompt") or ""),
+            product_presence=shot.get("product_presence", "unknown"),
+            claim_ids=claim_ids,
+            duration_ms=max(1, duration),
+            CTA=str(self.fixture.get("CTA") or self.fixture.get("cta") or "立即了解"),
+            shot_key=str(shot.get("shot_key") or shot.get("shot_id") or ""),
+        )]
+
+    def adapt_script(self, request: GeminiScriptRequest | Mapping[str, Any]) -> ScriptVersionPayload:
+        scripts = self.adapt_scripts(request)
+        if not scripts:
+            raise AnalysisSchemaInvalid("fixture did not contain a script")
+        return scripts[0]
+
+
+def _request_value(request: Any, name: str, default: Any = None) -> Any:
+    if isinstance(request, Mapping):
+        return request.get(name, default)
+    return getattr(request, name, default)
