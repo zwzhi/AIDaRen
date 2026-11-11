@@ -269,9 +269,6 @@ class CvBudgetPool(Base):
     """共享预算池（首版单池）：可用 = total - settled - reserved。"""
 
     __tablename__ = "cv_budget_pools"
-    __table_args__ = (
-        UniqueConstraint("name", "scope", name="uq_cv_budget_pool_name_scope"),
-    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(String(64), default="default")
@@ -289,25 +286,20 @@ class CvBudgetPool(Base):
     @classmethod
     async def ensure_default(cls, db, *, total: Decimal, created_by: int,
                              scope: str = "mock") -> "CvBudgetPool":
+        await db.execute(__import__("sqlalchemy").text(
+            "SELECT pg_advisory_xact_lock(82632024, 1102)"
+        ))
         pool = (await db.execute(
             __import__("sqlalchemy").select(cls).where(cls.name == "default", cls.scope == scope)
-            .with_for_update()
+            .order_by(cls.id.desc()).limit(1).with_for_update()
         )).scalar_one_or_none()
         if pool is None:
             try:
                 pool = cls(name="default", scope=scope, total_amount=total, created_by=created_by)
                 db.add(pool)
                 await db.flush()
-            except Exception as exc:
-                from sqlalchemy.exc import IntegrityError
-                if not isinstance(exc, IntegrityError):
-                    raise
-                await db.rollback()
-                pool = (await db.execute(
-                    __import__("sqlalchemy").select(cls).where(
-                        cls.name == "default", cls.scope == scope
-                    )
-                )).scalar_one()
+            except Exception:
+                raise
         return pool
 
 
