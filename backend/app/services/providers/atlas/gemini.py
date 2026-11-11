@@ -206,10 +206,12 @@ class GeminiAdapter:
         if self.fixture.get("scripts"):
             scripts = [ScriptVersionPayload.model_validate(item) for item in self.fixture["scripts"]]
             catalog = list(_request_value(request, "catalog_claims", ()) or ())
-            available = {
-                str(item.get("claim_id")) for item in catalog
-                if isinstance(item, Mapping) and item.get("claim_id") and item.get("approved", True)
-            }
+            available = set()
+            for item in catalog:
+                if isinstance(item, str):
+                    available.add(item)
+                elif isinstance(item, Mapping) and item.get("claim_id") and item.get("approved", True):
+                    available.add(str(item["claim_id"]))
             if available:
                 for script in scripts:
                     unknown = [claim_id for claim_id in script.claim_ids if claim_id not in available]
@@ -219,7 +221,7 @@ class GeminiAdapter:
         mode = str(_request_value(request, "mode", "structural_rewrite"))
         shot = dict(_request_value(request, "shot", {}) or {})
         catalog = list(_request_value(request, "catalog_claims", ()) or ())
-        claim = next((dict(c) for c in catalog if c.get("approved", True)), None)
+        claim = next((dict(c) for c in catalog if isinstance(c, Mapping) and c.get("approved", True)), None)
         claim_ids = [str(claim["claim_id"])] if claim and claim.get("claim_id") else []
         dialogue = str(claim.get("text") or "") if claim else ""
         locked = _request_value(request, "locked_duration_ms", None)
@@ -248,5 +250,8 @@ def _request_value(request: Any, name: str, default: Any = None) -> Any:
     if isinstance(request, Mapping):
         return request.get(name, default)
     return getattr(request, name, default)
+
+
+
 
 

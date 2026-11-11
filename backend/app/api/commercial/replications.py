@@ -222,10 +222,13 @@ async def create_scripts(
                 "catalog_claims": claims,
                 "locked_duration_ms": locked[row.shot_key] if body.mode == "high_fidelity" else None,
             }))
+    normalized_scripts: list[ScriptVersionPayload] = []
     for script in scripts:
-        if not script.mode:
-            script.mode = body.mode
+        if body.mode != "structural_rewrite" and script.mode == "structural_rewrite":
+            script = script.model_copy(update={"mode": body.mode})
         validate_script_contract(script, catalog_claim_ids=claim_ids, locked_durations=locked)
+        normalized_scripts.append(script)
+    scripts = normalized_scripts
     version = int(await db.scalar(select(func.max(CvScriptVersion.version)).where(
         CvScriptVersion.replication_project_id == project.id
     )) or 0) + 1
@@ -293,3 +296,5 @@ async def approve_replication_script(
     user: User = Depends(get_current_user),
 ):
     return await _approve_script(version_id, db, user, project_id)
+
+
