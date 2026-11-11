@@ -13,7 +13,7 @@ export type AnalysisOut = { analysis_run_id: number; status: string; mock: boole
 export type AnalysisResult = { id: number; status: string; error?: string | null; result: { shots: Shot[] } | null }
 export type Shot = {
   shot_id: string; start_ms: number; end_ms: number
-  observation?: string; inference?: string; uncertainty?: string
+  observation?: string; inference?: string; uncertainty?: string; dialogue_template?: string; action_template?: string
   dialogue?: string; action?: string; target_duration_ms?: number
 }
 export type TemplateItem = {
@@ -26,14 +26,20 @@ export type ActorItem = {
   versions: { id: number; version: number; image_asset_ids: number[] }[]
   voices: { id: number; audio_asset_id: number; authorized_until: string | null; status: string }[]
 }
-export type ProductItem = { id: number; name: string; current_version: number; latest_version_id?: number | null }
+export type ProductItem = {
+  id: number; name: string; current_version: number; latest_version_id?: number | null
+  form?: string; specs_text?: string; image_asset_ids?: number[]
+  claims?: { claim_id: string; text: string; approved?: boolean }[]
+  forbidden_phrases?: string[]; allowed_actions?: string[]
+}
 export type Unit = {
   unit_key: string; request_duration_ms: number
   covered_shot_keys: string[]; adopt_ranges: [string, number, number][]; notes?: string[]
 }
 export type AttemptOut = {
   id: number; status: string; attempt_no?: number; unit_key?: string | null; prediction_id: string | null
-  output_asset_key: string | null; error_code: string | null; error_message: string | null
+  output_asset_key: string | null; preview_url?: string | null; preview_mime?: string | null
+  error_code: string | null; error_message: string | null
 }
 export type ProductionDetail = {
   id: number; status: string; dialogue_locked: boolean
@@ -64,6 +70,7 @@ export type Capabilities = {
 }
 
 export const commercialApi = {
+  getHealth: () => request<{ ok: boolean; ark_mock?: boolean }>('/api/health'),
   getCapabilities: () => request<Capabilities>('/api/commercial/capabilities'),
   analyze: (sourceId: number) =>
     request<AnalysisOut & { analysis_run_id: number }>(`/api/commercial/sources/${sourceId}/analyze`, { method: 'POST' }),
@@ -71,6 +78,10 @@ export const commercialApi = {
   createTemplate: (name: string, analysisRunId: number, shots: Shot[]) =>
     request<{ template_id: number; version_id: number }>('/api/commercial/templates', {
       method: 'POST', body: JSON.stringify({ name, analysis_run_id: analysisRunId, shots }),
+    }),
+  publishTemplateVersion: (templateId: number, expectedVersion: number, shots: Shot[]) =>
+    request<{ template_id: number; version_id: number; version: number }>(`/api/commercial/templates/${templateId}/versions`, {
+      method: 'POST', body: JSON.stringify({ expected_version: expectedVersion, shots }),
     }),
   listTemplates: () => request<{ items: TemplateItem[] }>('/api/commercial/templates'),
   createActor: (name: string, imageAssetIds: number[], appearanceDesc: string) =>

@@ -91,3 +91,9 @@ artifacts/demo_env/
 
 # 后端私有存储运行时数据（商业素材/输出/导出，绝不入库）
 backend/app/data/
+
+# Codex 隔离修复轮产物：媒体/日志/素材不入库（源码与报告已提交；本地保留于 artifacts/）
+.playwright-cli/
+artifacts/codex_ui_fixes/
+artifacts/codex_ui_acceptance/
+backend/artifacts/

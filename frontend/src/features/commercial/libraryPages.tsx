@@ -15,13 +15,17 @@ export function CommercialActorsPage() {
   const [name, setName] = useState('')
   const [msg, setMsg] = useState('')
   const [pending, setPending] = useState<{ image?: number; voice?: number }>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const imgRef = useRef<HTMLInputElement>(null)
   const voiceRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(() => {
+    setLoading(true); setError('')
     commercialApi.listActors()
       .then(r => setActors(r.items))
-      .catch(e => setMsg(String(e instanceof Error ? e.message : e)))
+      .catch(e => setError(String(e instanceof Error ? e.message : e)))
+      .finally(() => setLoading(false))
   }, [])
   useEffect(refresh, [refresh])
 
@@ -74,6 +78,8 @@ export function CommercialActorsPage() {
       </div>
 
       <div className="pf-template-grid">
+        {loading && <p className="pf-muted">加载达人中…</p>}
+        {!loading && error && <p style={{ color: '#b3261e' }}>加载失败：{error}</p>}
         {actors.map(a => {
           const latest = a.versions[0]
           const voice = a.voices[0]
@@ -98,7 +104,7 @@ export function CommercialActorsPage() {
           )
         })}
       </div>
-      {actors.length === 0 && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有达人，先在上方创建。</p>}
+      {!loading && !error && actors.length === 0 && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有达人，先在上方创建。</p>}
     </CommercialLayout>
   )
 }
@@ -118,12 +124,16 @@ export function CommercialProductsPage() {
   const [specs, setSpecs] = useState('')
   const [imageId, setImageId] = useState<number | null>(null)
   const [msg, setMsg] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
   const imgRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(() => {
+    setLoading(true); setError('')
     commercialApi.listProducts()
-      .then(r => setProducts(r.items as ProductFull[]))
-      .catch(e => setMsg(String(e instanceof Error ? e.message : e)))
+      .then(r => setProducts(r.items))
+      .catch(e => setError(String(e instanceof Error ? e.message : e)))
+      .finally(() => setLoading(false))
   }, [])
   useEffect(refresh, [refresh])
 
@@ -175,6 +185,8 @@ export function CommercialProductsPage() {
       </div>
 
       <div className="pf-template-grid">
+        {loading && <p className="pf-muted">加载商品中…</p>}
+        {!loading && error && <p style={{ color: '#b3261e' }}>加载失败：{error}</p>}
         {products.map(p => (
           <div key={p.id} className="pf-template-card" style={{ cursor: 'default' }}>
             <div style={{ display: 'flex', gap: 10, padding: 14, alignItems: 'center' }}>
@@ -200,7 +212,7 @@ export function CommercialProductsPage() {
           </div>
         ))}
       </div>
-      {products.length === 0 && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有商品，先在上方创建。</p>}
+      {!loading && !error && products.length === 0 && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有商品，先在上方创建。</p>}
     </CommercialLayout>
   )
 }

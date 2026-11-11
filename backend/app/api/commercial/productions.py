@@ -36,6 +36,7 @@ from app.models_commercial import (
     CvVoiceProfile,
 )
 from app.services.commercial import mock_provider
+from app.services.commercial.asset_policy import CommercialAssetPolicyError, ensure_asset_readable
 from app.services.commercial.actors import VoiceBindingError, validate_voice_binding
 from app.services.commercial.adaptation import AdaptationError, adapt_template
 from app.services.commercial.budget_service import (
@@ -57,6 +58,43 @@ from app.services.providers.atlas.h3_reference import DRAFT_H3_CAPABILITIES
 router = APIRouter()
 
 
+async def _has_team_access(db: AsyncSession, team_id: int | None, user: User) -> bool:
+    if (user.role or "user") == "admin":
+        return True
+    if team_id is None:
+        return False
+    from app.models_teams import TeamMember
+
+    return (await db.scalar(select(TeamMember.id).where(
+        TeamMember.team_id == team_id,
+        TeamMember.user_id == user.id,
+        TeamMember.active.is_(True),
+    ))) is not None
+
+
+async def _can_read(db: AsyncSession, obj, user: User) -> bool:
+    if (user.role or "user") == "admin":
+        return True
+    owner = getattr(obj, "created_by", None)
+    if owner is None:
+        owner = getattr(obj, "uploaded_by", None)
+    if owner is None:
+        owner = getattr(obj, "requested_by", None)
+    if owner == user.id:
+        return True
+    return await _has_team_access(db, getattr(obj, "team_id", None), user)
+
+
+async def _can_read_production(db: AsyncSession, production: CvProduction, user: User) -> bool:
+    if await _can_read(db, production, user):
+        return True
+    from app.models_commercial import CvTemplate, CvTemplateVersion
+
+    version = await db.get(CvTemplateVersion, production.template_version_id)
+    template = await db.get(CvTemplate, version.template_id) if version else None
+    return template is not None and await _can_read(db, template, user)
+
+
 def _ensure_writer(obj, user: User) -> None:
     if (user.role or "user") == "admin":
         return
@@ -64,12 +102,48 @@ def _ensure_writer(obj, user: User) -> None:
         raise HTTPException(status_code=403, detail="无权修改该资源")
 
 
+async def _ensure_team_writer(db: AsyncSession, obj, user: User) -> None:
+    """允许资源所有者、管理员或所属团队成员执行已授权的业务写操作。"""
+    if (user.role or "user") == "admin":
+        return
+    if getattr(obj, "created_by", None) == user.id or getattr(obj, "uploaded_by", None) == user.id:
+        return
+    team_id = getattr(obj, "team_id", None)
+    if team_id is None and getattr(obj, "production_id", None) is not None:
+        production = await db.get(CvProduction, int(obj.production_id))
+        team_id = getattr(production, "team_id", None) if production else None
+        if production and await _can_read_production(db, production, user):
+            return
+    if team_id is not None and await _has_team_access(db, team_id, user):
+        return
+    raise HTTPException(status_code=403, detail="无权修改该资源")
+
+
 async def _get_production(db: AsyncSession, production_id: int, user: User) -> CvProduction:
     production = await db.get(CvProduction, production_id)
     if production is None:
         raise HTTPException(status_code=404, detail="作品不存在")
-    _ensure_writer(production, user)
+    if not await _can_read_production(db, production, user):
+        raise HTTPException(status_code=403, detail="无权访问该作品")
     return production
+
+
+def _validate_calibration_shots(shots: list[dict[str, Any]], duration_ms: int | None) -> None:
+    previous_end = 0
+    for shot in shots:
+        start_raw, end_raw = shot.get("start_ms"), shot.get("end_ms")
+        if isinstance(start_raw, bool) or isinstance(end_raw, bool):
+            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 时间码必须是整数毫秒")
+        if not isinstance(start_raw, int) or not isinstance(end_raw, int):
+            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 时间码必须是整数毫秒")
+        start_ms, end_ms = start_raw, end_raw
+        if start_ms < 0 or end_ms <= start_ms:
+            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 时间范围非法：需满足 0 ≤ 开始 < 结束")
+        if start_ms < previous_end:
+            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 与前一镜重叠")
+        if duration_ms is not None and end_ms > duration_ms:
+            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 超出原片时长 {duration_ms}ms")
+        previous_end = end_ms
 
 
 def _require_mock_or_verified() -> None:
@@ -127,7 +201,9 @@ class TemplateCreateBody(BaseModel):
 
 class TemplatePublishBody(BaseModel):
     expected_version: int
-    structure: dict[str, Any]
+    structure: dict[str, Any] | None = None
+    shots: list[dict[str, Any]] | None = None
+    analysis_run_id: int | None = None
 
 
 @router.post("/templates", summary="从解析结果创建模板草稿")
@@ -135,19 +211,15 @@ async def create_template(
     body: TemplateCreateBody,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    from app.models_commercial import CvAnalysisRun, CvTemplate
+    from app.models_commercial import CvAnalysisRun, CvReferenceSource, CvTemplate
 
     run = await db.get(CvAnalysisRun, body.analysis_run_id)
-    if run is None or run.status != "completed":
+    if run is None or run.status != "completed" or not await _can_read(db, run, user):
         raise HTTPException(status_code=400, detail="解析未完成，无法建模板")
-    # 服务端校准校验：时间码必须非负且 end>start（毫秒精度，禁止静默取整/修复）
-    for shot in body.shots:
-        try:
-            s = int(shot.get("start_ms")); e = int(shot.get("end_ms"))
-        except (TypeError, ValueError):
-            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 时间码必须是整数毫秒")
-        if s < 0 or e <= s:
-            raise HTTPException(status_code=422, detail=f"镜头 {shot.get('shot_id')} 时间范围非法：需满足 0 ≤ 开始 < 结束")
+    source = await db.get(CvReferenceSource, run.source_id)
+    if source is None:
+        raise HTTPException(status_code=400, detail="参考视频不存在")
+    _validate_calibration_shots(body.shots, source.duration_ms)
     template = CvTemplate(name=body.name, created_by=user.id)
     db.add(template)
     await db.flush()
@@ -157,9 +229,54 @@ async def create_template(
             "variables": ["opening_question", "approved_core_claim", "closing_cta"],
         },
         expected_version=1, publisher_id=user.id, analysis_run_id=run.id,
+        source_duration_ms=source.duration_ms,
     )
     await db.commit()
     return {"template_id": template.id, "version_id": version.id, "version": 1}
+
+
+@router.post("/templates/{template_id}/versions", summary="发布模板新版本")
+async def publish_template_version(
+    template_id: int, body: TemplatePublishBody,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    from app.models_commercial import CvAnalysisRun, CvReferenceSource, CvTemplate
+
+    template = await db.get(CvTemplate, template_id)
+    if template is None or not await _can_read(db, template, user):
+        raise HTTPException(status_code=404, detail="模板不存在")
+    payload = dict(body.structure or {})
+    if body.shots is not None:
+        payload["shots"] = body.shots
+    if not payload.get("shots"):
+        raise HTTPException(status_code=422, detail="模板至少包含一个镜头")
+    run = None
+    if body.analysis_run_id is not None:
+        run = await db.get(CvAnalysisRun, body.analysis_run_id)
+        if run is None or run.status != "completed" or not await _can_read(db, run, user):
+            raise HTTPException(status_code=404, detail="解析记录不存在")
+    else:
+        from app.models_commercial import CvTemplateVersion
+        latest = (await db.execute(select(CvTemplateVersion).where(
+            CvTemplateVersion.template_id == template.id,
+        ).order_by(CvTemplateVersion.version.desc()).limit(1))).scalar_one_or_none()
+        if latest and latest.source_analysis_run_id:
+            run = await db.get(CvAnalysisRun, latest.source_analysis_run_id)
+    duration_ms = None
+    if run is not None:
+        source = await db.get(CvReferenceSource, run.source_id)
+        duration_ms = source.duration_ms if source else None
+    _validate_calibration_shots(payload["shots"], duration_ms)
+    try:
+        version = await publish_template(
+            db, template=template, draft_payload=payload,
+            expected_version=body.expected_version, publisher_id=user.id,
+            analysis_run_id=run.id if run else None, source_duration_ms=duration_ms,
+        )
+    except TemplatePublishError as exc:
+        raise HTTPException(status_code=409, detail=exc.message) from exc
+    await db.commit()
+    return {"template_id": template.id, "version_id": version.id, "version": version.version}
 
 
 @router.get("/templates/{version_id}", summary="模板版本完整结构（校准内容重读）")
@@ -173,6 +290,8 @@ async def get_template_version(
     if version is None:
         raise HTTPException(status_code=404, detail="模板版本不存在")
     template = await db.get(CvTemplate, version.template_id)
+    if template is None or not await _can_read(db, template, user):
+        raise HTTPException(status_code=404, detail="模板版本不存在")
     from app.services.commercial.template_service import source_availability
 
     return {
@@ -194,6 +313,7 @@ async def list_templates(
     templates = (await db.execute(
         select(CvTemplate).where(CvTemplate.archived.is_(False)).order_by(CvTemplate.id.desc())
     )).scalars().all()
+    templates = [t for t in templates if await _can_read(db, t, user)]
     out = []
     for template in templates:
         versions = (await db.execute(
@@ -264,7 +384,7 @@ async def bind_voice(
     actor = await db.get(CvActor, actor_id)
     if actor is None:
         raise HTTPException(status_code=404, detail="达人不存在")
-    _ensure_writer(actor, user)
+    await _ensure_team_writer(db, actor, user)
     asset = await db.get(CvMediaAsset, body.audio_asset_id)
     if asset is None or asset.source_role != "owned_voice_reference":
         raise HTTPException(status_code=400, detail="音色样本必须来自已上传的授权音色素材")
@@ -284,6 +404,7 @@ async def list_actors(
     from app.models_commercial import CvActor, CvActorVersion, CvVoiceProfile
 
     actors = (await db.execute(select(CvActor).order_by(CvActor.id.desc()))).scalars().all()
+    actors = [a for a in actors if await _can_read(db, a, user)]
     out = []
     for actor in actors:
         versions = (await db.execute(
@@ -342,6 +463,7 @@ async def list_products(
     from app.models_commercial import CvProduct, CvProductVersion
 
     products = (await db.execute(select(CvProduct).order_by(CvProduct.id.desc()))).scalars().all()
+    products = [p for p in products if await _can_read(db, p, user)]
     out = []
     for p in products:
         latest = (await db.execute(
@@ -350,8 +472,18 @@ async def list_products(
         )).scalar_one_or_none()
         # latest_version_id 是创建作品要引用的版本行 ID；
         # current_version 仅是版本号（多个商品会重复，不能当作 ID 使用）
+        latest_row = (await db.execute(select(CvProductVersion).where(
+            CvProductVersion.product_id == p.id,
+            CvProductVersion.id == latest,
+        ))).scalar_one_or_none() if latest else None
         out.append({"id": p.id, "name": p.name, "current_version": p.current_version,
-                    "latest_version_id": latest})
+                    "latest_version_id": latest,
+                    "form": latest_row.form if latest_row else "",
+                    "specs_text": latest_row.specs_text if latest_row else "",
+                    "image_asset_ids": latest_row.image_asset_ids or [] if latest_row else [],
+                    "claims": latest_row.claims or [] if latest_row else [],
+                    "forbidden_phrases": latest_row.forbidden_phrases or [] if latest_row else [],
+                    "allowed_actions": latest_row.allowed_actions or [] if latest_row else []})
     return {"items": out}
 
 
@@ -375,10 +507,31 @@ async def create_production(
     body: ProductionCreateBody,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
+    from app.models_commercial import CvActor, CvProduct, CvTemplate, CvTemplateVersion
+
     actor_version = await db.get(CvActorVersion, body.actor_version_id)
     voice = await db.get(CvVoiceProfile, body.voice_profile_id)
-    if actor_version is None or voice is None:
+    template_version = await db.get(CvTemplateVersion, body.template_version_id)
+    product_version = await db.get(CvProductVersion, body.product_version_id)
+    actor = await db.get(CvActor, actor_version.actor_id) if actor_version else None
+    product = await db.get(CvProduct, product_version.product_id) if product_version else None
+    template = await db.get(CvTemplate, template_version.template_id) if template_version else None
+    if actor_version is None or voice is None or template_version is None or product_version is None:
         raise HTTPException(status_code=400, detail="达人版本或音色不存在")
+    access_checks = [await _can_read(db, obj, user) for obj in (actor, product, template)]
+    if not all(access_checks):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    voice_actor = await db.get(CvActor, voice.actor_id)
+    if voice_actor is None or not await _can_read(db, voice_actor, user):
+        raise HTTPException(status_code=404, detail="音色不存在")
+    for asset_id in [*(actor_version.image_asset_ids or []), *(product_version.image_asset_ids or []), voice.audio_asset_id]:
+        asset = await db.get(CvMediaAsset, int(asset_id))
+        if asset is None:
+            raise HTTPException(status_code=400, detail="绑定素材不存在")
+        try:
+            await ensure_asset_readable(db, asset, user.id, is_admin=(user.role == "admin"))
+        except CommercialAssetPolicyError:
+            raise HTTPException(status_code=404, detail="绑定素材不存在") from None
     try:
         validate_voice_binding(actor_version, voice, allow_cross_actor=body.allow_cross_actor_voice)
     except VoiceBindingError as exc:
@@ -679,6 +832,7 @@ async def list_productions(
     rows = (await db.execute(
         select(CvProduction).order_by(CvProduction.id.desc()).limit(50)
     )).scalars().all()
+    rows = [row for row in rows if await _can_read_production(db, row, user)]
     items = []
     for pr in rows:
         tv = await db.get(CvTemplateVersion, pr.template_version_id)
@@ -705,9 +859,7 @@ async def get_production(
     production_id: int,
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
-    production = await db.get(CvProduction, production_id)
-    if production is None:
-        raise HTTPException(status_code=404, detail="作品不存在")
+    production = await _get_production(db, production_id, user)
     attempts = (await db.execute(
         select(CvGenerationAttempt).where(CvGenerationAttempt.production_id == production.id)
         .order_by(CvGenerationAttempt.id)
@@ -737,6 +889,8 @@ async def get_production(
             "unit_key": (a.params_json or {}).get("unit_key"),
             "status": a.status, "prediction_id": a.provider_prediction_id,
             "output_asset_key": a.output_asset_key,
+            "preview_url": (f"/api/commercial/attempts/{a.id}/preview" if a.output_asset_key else None),
+            "preview_mime": "video/mp4" if a.output_asset_key else None,
             "error_code": a.error_code, "error_message": a.error_message,
         } for a in attempts],
         "latest_export": ({"id": latest_export.id, "kind": latest_export.kind or "master"}
@@ -765,7 +919,7 @@ async def review_attempt(
     attempt = await db.get(CvGenerationAttempt, attempt_id)
     if attempt is None:
         raise HTTPException(status_code=404, detail="生成尝试不存在")
-    _ensure_writer(attempt, user)
+    await _ensure_team_writer(db, attempt, user)
     normalized: dict[str, object] = {}
     for dim, verdict in body.dimensions.items():
         normalized[dim] = tuple(verdict) if isinstance(verdict, list) else verdict
@@ -775,6 +929,26 @@ async def review_attempt(
     )
     await db.commit()  # 审核结果必须落库（追加历史 + 状态推进）
     return {"attempt_id": attempt.id, "overall": decision.overall}
+
+
+@router.get("/attempts/{attempt_id}/preview", summary="受控播放生成片段")
+async def preview_attempt(
+    attempt_id: int,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    attempt = await db.get(CvGenerationAttempt, attempt_id)
+    if attempt is None or attempt.production_id is None:
+        raise HTTPException(status_code=404, detail="生成片段不存在")
+    production = await _get_production(db, attempt.production_id, user)
+    key = (attempt.output_asset_key or "").strip()
+    if not key or "/" in key or "\\" in key or key != key.split(".")[0] + ".mp4":
+        raise HTTPException(status_code=404, detail="生成片段不存在")
+    from app.services.commercial.storage import asset_disk_path
+
+    path = asset_disk_path(f"outputs/{key}")
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="生成片段不存在")
+    return FileResponse(path, media_type="video/mp4", filename=key)
 
 
 # ---------------------------------------------------------------- 合成与导出
@@ -942,7 +1116,7 @@ async def get_export(
     export = await db.get(CvExport, export_id)
     if export is None:
         raise HTTPException(status_code=404, detail="导出不存在")
-    _ensure_writer(export, user)
+    await _ensure_team_writer(db, export, user)
     return {
         "id": export.id, "production_id": export.production_id,
         "kind": export.kind or "master",
@@ -969,7 +1143,7 @@ async def burn_export(
     export = await db.get(CvExport, export_id)
     if export is None:
         raise HTTPException(status_code=404, detail="导出不存在")
-    _ensure_writer(export, user)
+    await _ensure_team_writer(db, export, user)
     srt = (body.srt_content or "").strip() or (export.srt_content or "")
     if not srt.strip():
         raise HTTPException(status_code=422, detail="没有可烧录的字幕内容（请先校对字幕草稿）")
@@ -1003,7 +1177,7 @@ async def download_export(
     export = await db.get(CvExport, export_id)
     if export is None:
         raise HTTPException(status_code=404, detail="导出不存在")
-    _ensure_writer(export, user)
+    await _ensure_team_writer(db, export, user)
     from pathlib import Path as _Path
 
     variant = "subtitled" if (request.query_params.get("variant") == "subtitled") else "master"

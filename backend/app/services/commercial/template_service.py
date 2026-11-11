@@ -23,19 +23,31 @@ class TemplatePublishError(Exception):
 _REQUIRED_SHOT_FIELDS = ("shot_id", "start_ms", "end_ms")
 
 
-def _validate_draft(draft_payload: dict[str, Any]) -> None:
+def _validate_draft(draft_payload: dict[str, Any], *, source_duration_ms: int | None = None) -> None:
     shots = draft_payload.get("shots")
     if not isinstance(shots, list) or not shots:
         raise TemplatePublishError("TEMPLATE_STRUCTURE_INVALID", "模板至少包含一个镜头")
+    previous_end = 0
     for shot in shots:
         if not isinstance(shot, dict) or any(f not in shot for f in _REQUIRED_SHOT_FIELDS):
             raise TemplatePublishError("TEMPLATE_STRUCTURE_INVALID", f"镜头缺少必需字段：{_REQUIRED_SHOT_FIELDS}")
+        start, end = shot.get("start_ms"), shot.get("end_ms")
+        if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int):
+            raise TemplatePublishError("TEMPLATE_TIME_INVALID", "镜头时间码必须是整数毫秒")
+        if start < 0 or end <= start:
+            raise TemplatePublishError("TEMPLATE_TIME_INVALID", "镜头时间范围非法")
+        if start < previous_end:
+            raise TemplatePublishError("TEMPLATE_TIME_INVALID", "镜头时间范围重叠")
+        if source_duration_ms is not None and end > source_duration_ms:
+            raise TemplatePublishError("TEMPLATE_TIME_INVALID", "镜头超出原片时长")
+        previous_end = end
 
 
 async def publish_template(
     db: AsyncSession, *, template: CvTemplate, draft_payload: dict[str, Any],
     expected_version: int, publisher_id: int,
     analysis_run_id: int | None = None,
+    source_duration_ms: int | None = None,
 ) -> CvTemplateVersion:
     """校验草稿并冻结为不可变版本；expected_version 防并发覆盖。
 
@@ -43,7 +55,7 @@ async def publish_template(
     - 同版本号已存在（重复提交）→ 冲突；
     - 发布后模板 current_version 前移；历史版本保持 published 不改写。
     """
-    _validate_draft(draft_payload)
+    _validate_draft(draft_payload, source_duration_ms=source_duration_ms)
     next_version = int(template.current_version or 0) + 1
     if int(expected_version) != next_version:
         raise TemplatePublishError(

@@ -169,3 +169,37 @@ async def test_template_list_and_detail_are_stable_for_reload(client, db_session
     entry = next(t for t in listing["items"] if t["name"] == "刷新稳定模板")
     v = next(v for v in entry["versions"] if v["id"] == version_id)
     assert v["shot_count"] == 1 and v["total_duration_ms"] == 7777  # 与详情毫秒一致
+
+
+@pytest.mark.asyncio
+async def test_v2_publish_http_keeps_v1_snapshot(client, db_session, admin) -> None:
+    """V2 必须通过 HTTP 发布，且 V1 快照不可变。"""
+    run_id = await _make_run(db_session, admin)
+    v1 = await client.post("/api/commercial/templates", json={
+        "name": "HTTP V2 模板", "analysis_run_id": run_id,
+        "shots": [{"shot_id": "S01", "start_ms": 0, "end_ms": 8350, "observation": "V1"}],
+    })
+    assert v1.status_code == 200, v1.text
+    template_id, v1_id = v1.json()["template_id"], v1.json()["version_id"]
+    v2 = await client.post(f"/api/commercial/templates/{template_id}/versions", json={
+        "expected_version": 2,
+        "shots": [{"shot_id": "S01", "start_ms": 0, "end_ms": 20001, "observation": "V2"}],
+    })
+    assert v2.status_code == 200, v2.text
+    d1 = (await client.get(f"/api/commercial/templates/{v1_id}")).json()
+    d2 = (await client.get(f"/api/commercial/templates/{v2.json()['version_id']}")).json()
+    assert d1["structure"]["shots"][0]["observation"] == "V1"
+    assert d1["structure"]["shots"][0]["end_ms"] == 8350
+    assert d2["structure"]["shots"][0]["observation"] == "V2"
+    assert d2["structure"]["shots"][0]["end_ms"] == 20001
+
+
+@pytest.mark.asyncio
+async def test_calibration_http_rejects_source_duration_overrun(client, db_session, admin) -> None:
+    run_id = await _make_run(db_session, admin)
+    response = await client.post("/api/commercial/templates", json={
+        "name": "越界模板", "analysis_run_id": run_id,
+        "shots": [{"shot_id": "S01", "start_ms": 0, "end_ms": 30001}],
+    })
+    assert response.status_code == 422
+    assert "原片时长" in response.json()["detail"]

@@ -174,6 +174,10 @@ async def register_reference_source(
     asset = await db.get(CvMediaAsset, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail="素材不存在")
+    try:
+        await ensure_asset_readable(db, asset, user.id, is_admin=(user.role == "admin"))
+    except CommercialAssetPolicyError:
+        raise HTTPException(status_code=404, detail="素材不存在") from None
     if asset.source_role != "reference_source_video":
         raise HTTPException(status_code=400, detail="仅 reference_source_video 角色可登记为参考源")
     source = CvReferenceSource(
@@ -200,6 +204,13 @@ async def analyze_source(
     source = await db.get(CvReferenceSource, source_id)
     if source is None:
         raise HTTPException(status_code=404, detail="参考视频不存在")
+    source_asset = await db.get(CvMediaAsset, source.media_asset_id)
+    if source_asset is None:
+        raise HTTPException(status_code=404, detail="参考视频不存在")
+    try:
+        await ensure_asset_readable(db, source_asset, user.id, is_admin=(user.role == "admin"))
+    except CommercialAssetPolicyError:
+        raise HTTPException(status_code=404, detail="参考视频不存在") from None
     settings = _gs()
     model_id = (settings.gemini_analysis_model_id or "").strip()
     run = await get_or_create_analysis_run(
@@ -258,11 +269,21 @@ async def get_analysis(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    from app.models_commercial import CvAnalysisRun
+    from app.models_commercial import CvAnalysisRun, CvReferenceSource
 
     run = await db.get(CvAnalysisRun, run_id)
     if run is None:
         raise HTTPException(status_code=404, detail="解析任务不存在")
+    source = await db.get(CvReferenceSource, run.source_id)
+    if source is None:
+        raise HTTPException(status_code=404, detail="解析任务不存在")
+    asset = await db.get(CvMediaAsset, source.media_asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="解析任务不存在")
+    try:
+        await ensure_asset_readable(db, asset, user.id, is_admin=(user.role == "admin"))
+    except CommercialAssetPolicyError:
+        raise HTTPException(status_code=404, detail="解析任务不存在") from None
     return {
         "id": run.id, "status": run.status, "model_id": run.model_id,
         "result": run.result, "error": run.error,

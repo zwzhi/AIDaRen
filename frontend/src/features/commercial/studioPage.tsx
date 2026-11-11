@@ -25,12 +25,14 @@ function RedoEntry({ unitKey, productionId, attempts, dialogueOverride, onDialog
   const [busy, setBusy] = useState<'quote' | 'generate' | null>(null)
   const [quote, setQuote] = useState<{ id: number; amount: string } | null>(null)
   const [msg, setMsg] = useState('')
+  const dialogueInputRef = useRef<HTMLInputElement>(null)
   const mine = attempts.filter(a => a.unit_key === unitKey)
   const latest = mine[mine.length - 1]
   const redo = async () => {
     setBusy('quote'); setMsg('')
     try {
-      const q = await commercialApi.quote(productionId, unitKey)
+      const override = (document.querySelector<HTMLInputElement>(`input[data-unit-key="${unitKey}"]`)?.value ?? dialogueInputRef.current?.value ?? dialogueOverride ?? '').trim()
+      const q = await commercialApi.quote(productionId, unitKey, override)
       setQuote({ id: q.quote_id, amount: q.amount }); setBusy(null)
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)); setBusy(null) }
   }
@@ -38,7 +40,8 @@ function RedoEntry({ unitKey, productionId, attempts, dialogueOverride, onDialog
     setBusy('generate')
     try {
       const reqId = `redo-${productionId}-${unitKey}-${Date.now()}`
-      const r = await commercialApi.generate(productionId, unitKey, quote!.id, reqId)
+      const override = (document.querySelector<HTMLInputElement>(`input[data-unit-key="${unitKey}"]`)?.value ?? dialogueInputRef.current?.value ?? dialogueOverride ?? '').trim()
+      const r = await commercialApi.generate(productionId, unitKey, quote!.id, reqId, override)
       setMsg(`已创建新尝试 #${r.attempt_id}（${r.attempt_status}）；旧版本与费用保留`)
       setQuote(null); onDone()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) } finally { setBusy(null) }
@@ -50,7 +53,7 @@ function RedoEntry({ unitKey, productionId, attempts, dialogueOverride, onDialog
         本单元尝试：{mine.map(a => `#${a.id}${a.attempt_no && a.attempt_no > 1 ? `（第${a.attempt_no}次）` : ''}·${a.status}`).join('、')}
       </span>
       <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input className="cv-input" style={{ width: 300 }} placeholder="重做台词（留空沿用；修改后旧批准自动失效）"
+        <input ref={dialogueInputRef} data-unit-key={unitKey} className="cv-input" style={{ width: 300 }} placeholder="重做台词（留空沿用；修改后旧批准自动失效）"
           value={dialogueOverride ?? ''} onChange={e => onDialogueChange(e.target.value)} />
         {!quote
           ? <Button variant="outline" size="sm" disabled={busy != null} onClick={redo}>重做 → 重新报价</Button>
@@ -68,13 +71,18 @@ export default function CommercialStudioPage() {
   const [templates, setTemplates] = useState<TemplateItem[]>([])
   const [actors, setActors] = useState<ActorItem[]>([])
   const [products, setProducts] = useState<ProductItem[]>([])
-  const [sel, setSel] = useState({ template: 0, actorVersion: 0, voice: 0, productVersion: 0 })
+  const [sel, setSel] = useState({ template: 0, actorVersion: 0, voice: 0, productVersion: 0, resolution: '' })
   const [productionId, setProductionIdState] = useState<number | null>(null)
   const [detail, setDetail] = useState<Awaited<ReturnType<typeof commercialApi.getProduction>> | null>(null)
   const [quotes, setQuotes] = useState<Record<string, { id: number; amount: string }>>({})
   const [redoDialogue, setRedoDialogue] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState('')
+  const [msgKind, setMsgKind] = useState<'info' | 'error'>('info')
+  const [caps, setCaps] = useState<Awaited<ReturnType<typeof commercialApi.getCapabilities>> | null>(null)
+  const [capsLoading, setCapsLoading] = useState(true)
+  const [capsError, setCapsError] = useState('')
   const [searchParams, setSearchParams] = useSearchParams()
+  const hasUnsavedRedo = Object.values(redoDialogue).some(v => v && v.trim())
   const reqIdBase = useRef(`ui-${Date.now()}`)
   const restoredRef = useRef(false)
 
@@ -85,9 +93,17 @@ export default function CommercialStudioPage() {
   }
 
   useEffect(() => {
-    commercialApi.listTemplates().then(r => setTemplates(r.items))
-    commercialApi.listActors().then(r => setActors(r.items))
-    commercialApi.listProducts().then(r => setProducts(r.items))
+    let alive = true
+    setCapsLoading(true)
+    Promise.all([commercialApi.listTemplates(), commercialApi.listActors(), commercialApi.listProducts(), commercialApi.getCapabilities()])
+      .then(([tpl, actor, product, capabilities]) => {
+        if (!alive) return
+        setTemplates(tpl.items); setActors(actor.items); setProducts(product.items); setCaps(capabilities)
+        setSel(s => ({ ...s, resolution: capabilities.resolutions.includes(s.resolution) ? s.resolution : (capabilities.resolutions[0] ?? '') }))
+      })
+      .catch(e => { if (alive) setCapsError(e instanceof Error ? e.message : String(e)) })
+      .finally(() => { if (alive) setCapsLoading(false) })
+    return () => { alive = false }
   }, [])
   useEffect(() => {
     if (restoredRef.current) return
@@ -97,12 +113,22 @@ export default function CommercialStudioPage() {
     else if (tplFromUrl > 0) { restoredRef.current = true; setSel(s => ({ ...s, template: tplFromUrl })) }
   }, [searchParams])
   useEffect(() => {
-    const hasDraft = Object.values(redoDialogue).some(v => v && v.trim())
-    if (!hasDraft) return
+    if (!hasUnsavedRedo) return
     const guard = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
     window.addEventListener('beforeunload', guard)
     return () => window.removeEventListener('beforeunload', guard)
-  }, [redoDialogue])
+  }, [hasUnsavedRedo])
+  useEffect(() => {
+    if (!hasUnsavedRedo) return
+    const guard = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null
+      const link = target?.closest('a[href]') as HTMLAnchorElement | null
+      if (!link || !link.getAttribute('href')?.startsWith('/')) return
+      if (!window.confirm('当前重做台词尚未提交，确定离开吗？')) event.preventDefault()
+    }
+    document.addEventListener('click', guard, true)
+    return () => document.removeEventListener('click', guard, true)
+  }, [hasUnsavedRedo])
 
   const refreshDetail = useCallback((pid: number) => {
     commercialApi.getProduction(pid).then(setDetail).catch(e => setMsg(String(e instanceof Error ? e.message : e)))
@@ -111,13 +137,16 @@ export default function CommercialStudioPage() {
 
   const create = async () => {
     try {
+      if (!caps || capsLoading || !caps.resolutions.includes(sel.resolution)) {
+        setMsgKind('error'); setMsg('能力档案未加载或当前分辨率已失效，无法创建作品'); return
+      }
       const r = await commercialApi.createProduction({
         template_version_id: sel.template, actor_version_id: sel.actorVersion,
         voice_profile_id: sel.voice, product_version_id: sel.productVersion,
-        dialogue_locked: false, resolution_id: '768p',
+        dialogue_locked: false, resolution_id: sel.resolution,
       })
-      setProductionId(r.production_id); setMsg('')
-    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
+      setProductionId(r.production_id); setMsgKind('info'); setMsg('')
+    } catch (e) { setMsgKind('error'); setMsg(e instanceof Error ? e.message : String(e)) }
   }
   const step = async () => {
     if (!productionId) return
@@ -182,16 +211,26 @@ export default function CommercialStudioPage() {
             <label>商品</label>
             <select className="cv-input" value={sel.productVersion || ''} onChange={e => setSel(s => ({ ...s, productVersion: +e.target.value }))}>
               <option value="" disabled>选择商品</option>
-              {products.map(p => <option key={p.id} value={p.current_version}>{p.name}</option>)}
+              {products.map(p => <option key={p.id} value={p.latest_version_id ?? ''} disabled={!p.latest_version_id}>{p.name}{p.latest_version_id ? '' : '（无可用版本）'}</option>)}
+            </select>
+          </div>
+          <div className="cv-field" style={{ margin: 0, minWidth: 150 }}>
+            <label>生成分辨率</label>
+            <select className="cv-input" value={sel.resolution} disabled={capsLoading || Boolean(capsError)}
+              onChange={e => setSel(s => ({ ...s, resolution: e.target.value }))}>
+              <option value="">{capsLoading ? '能力加载中…' : '选择分辨率'}</option>
+              {(caps?.resolutions ?? []).map(r => <option key={r} value={r}>{r}</option>)}
             </select>
           </div>
           <div style={{ alignSelf: 'flex-end' }}>
-            <Button variant="lime" disabled={!sel.template || !sel.actorVersion || !sel.voice || !sel.productVersion} onClick={create}>
+            <Button variant="lime" disabled={!sel.template || !sel.actorVersion || !sel.voice || !sel.productVersion || !sel.resolution || capsLoading || Boolean(capsError)} onClick={create}>
               创建作品
             </Button>
           </div>
         </div>
-        {msg && <p style={{ fontSize: 13, color: '#b3261e', margin: '10px 0 0' }}>{msg}</p>}
+        {capsError && <p style={{ fontSize: 13, color: '#b3261e', margin: '10px 0 0' }}>能力档案加载失败：{capsError}。请刷新后重试。</p>}
+        {msg && <p style={{ fontSize: 13, color: msgKind === 'error' ? '#b3261e' : 'var(--pf-ink)', margin: '10px 0 0' }}>{msg}</p>}
+        {caps && <p className="pf-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>能力档案 {caps.capability_version} · {caps.capability_verified ? '已验证' : 'DRAFT，未完成真实契约验证'} · 分辨率：{caps.resolutions.join(' / ') || '无'}</p>}
       </div>
 
       {/* ② 文案与分镜 */}

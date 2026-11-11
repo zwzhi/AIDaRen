@@ -18,6 +18,31 @@ type ProductionItem = {
   created_at: string | null
 }
 
+function AttemptPreview({ url, mime }: { url: string; mime?: string | null }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    let active = true
+    let objectUrl: string | null = null
+    setBlobUrl(null); setFailed(false)
+    const target = url.startsWith('http') ? url : `${API_BASE}${url}`
+    fetch(target, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+      .then(response => response.ok ? response.blob() : Promise.reject(new Error(String(response.status))))
+      .then(blob => {
+        if (!active) return
+        objectUrl = URL.createObjectURL(blob)
+        setBlobUrl(objectUrl)
+      })
+      .catch(() => { if (active) setFailed(true) })
+    return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [url])
+  if (failed) return <p className="pf-muted" style={{ fontSize: 12 }}>媒体预览加载失败</p>
+  if (!blobUrl) return <p className="pf-muted" style={{ fontSize: 12 }}>媒体预览加载中…</p>
+  return (mime || '').startsWith('audio/')
+    ? <audio controls preload="metadata" src={blobUrl} style={{ width: '100%', height: 32 }} />
+    : <video controls preload="metadata" src={blobUrl} style={{ display: 'block', width: 'min(100%, 420px)', maxHeight: 260, borderRadius: 8 }} />
+}
+
 const DIMS = ['人物身份', '商品准确', '音色', '台词', '口型', '动作与画面', '模板表达', '技术输出'] as const
 
 /* ---------------------------------------------------------------- 任务与作品 */
@@ -29,11 +54,17 @@ export function CommercialTasksPage() {
   const [exportId, setExportId] = useState<number | null>(null)
   const [exportKind, setExportKind] = useState<string>('master')
   const [subtitled, setSubtitled] = useState(false)
+  const [exportDetail, setExportDetail] = useState<{ srt_content: string | null; subtitled_path: string | null } | null>(null)
+  const [srtDraft, setSrtDraft] = useState('')
+  const [burnMsg, setBurnMsg] = useState('')
+  const [loading, setLoading] = useState(true)
 
   const refreshList = useCallback(() => {
+    setLoading(true); setMsg('')
     request<{ items: ProductionItem[] }>('/api/commercial/productions')
       .then(r => setItems(r.items))
       .catch(e => setMsg(String(e instanceof Error ? e.message : e)))
+      .finally(() => setLoading(false))
   }, [])
   useEffect(refreshList, [refreshList])
 
@@ -43,8 +74,10 @@ export function CommercialTasksPage() {
       setDetail(d)
       if (d.latest_export) {
         setExportId(d.latest_export.id); setExportKind(d.latest_export.kind)
-        commercialApi.getExport(d.latest_export.id).then(ex => setSubtitled(Boolean(ex.subtitled_path))).catch(() => {})
-      } else { setExportId(null); setSubtitled(false) }
+        commercialApi.getExport(d.latest_export.id).then(ex => {
+          setSubtitled(Boolean(ex.subtitled_path)); setExportDetail(ex); setSrtDraft(ex.srt_content || '')
+        }).catch(() => {})
+      } else { setExportId(null); setSubtitled(false); setExportDetail(null); setSrtDraft('') }
     }).catch(e => setMsg(String(e instanceof Error ? e.message : e)))
   }, [])
   useEffect(() => { if (activeId) openDetail(activeId) }, [activeId, openDetail])
@@ -96,12 +129,23 @@ export function CommercialTasksPage() {
     a.click(); URL.revokeObjectURL(a.href)
   }
 
+  const burn = async () => {
+    if (!exportId || !srtDraft.trim()) { setBurnMsg('请先校对字幕草稿'); return }
+    setBurnMsg('烧录中…')
+    try {
+      await commercialApi.burnExport(exportId, srtDraft)
+      const ex = await commercialApi.getExport(exportId)
+      setExportDetail(ex); setSubtitled(Boolean(ex.subtitled_path)); setBurnMsg('烧录完成，母版未改动')
+    } catch (e) { setBurnMsg(e instanceof Error ? e.message : String(e)) }
+  }
+
   return (
     <CommercialLayout>
       <CommercialPageHead title="任务与作品" desc="浏览全部作品：镜头状态、审核、重做与导出；无需记住内部编号。" />
       <MockModeNote />
 
       <div className="pf-template-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))' }}>
+        {loading && <p className="pf-muted">加载作品中…</p>}
         {items.map(p => (
           <button key={p.id} type="button" className="pf-template-card"
             style={{ cursor: 'pointer', textAlign: 'left', border: activeId === p.id ? '2px solid var(--pf-lime)' : undefined }}
@@ -119,7 +163,7 @@ export function CommercialTasksPage() {
           </button>
         ))}
       </div>
-      {items.length === 0 && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有作品，去制作工作台创建。</p>}
+      {!loading && items.length === 0 && !msg && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有作品，去制作工作台创建。</p>}
       {msg && <p style={{ fontSize: 13, color: 'var(--pf-ink)', margin: '12px 0' }}>{msg}</p>}
 
       {detail && (
@@ -144,6 +188,11 @@ export function CommercialTasksPage() {
                   </>
                 )}
               </div>
+              {a.preview_url && (
+                <div style={{ padding: '0 10px 8px' }}>
+                  <AttemptPreview url={a.preview_url} mime={a.preview_mime} />
+                </div>
+              )}
               {a.error_message && <p style={{ fontSize: 12, color: '#b3261e', margin: '0 0 6px 10px' }}>{a.error_message}</p>}
             </div>
           ))}
@@ -163,7 +212,14 @@ export function CommercialTasksPage() {
                   ? <Button variant="outline" size="sm" onClick={() => download('subtitled')}>下载烧录字幕版</Button>
                   : <span className="pf-muted" style={{ fontSize: 12, alignSelf: 'center' }}>烧录版未生成</span>}
               </div>
-              <p className="pf-muted" style={{ fontSize: 12, marginTop: 8 }}>字幕为未校对草稿；烧录请进入导出详情页操作（母版不变、只重跑后期）。</p>
+              {exportDetail && <div style={{ marginTop: 10 }}>
+                <label className="cv-field" style={{ margin: 0 }}>字幕校对
+                  <textarea className="cv-textarea" value={srtDraft} onChange={e => setSrtDraft(e.target.value)} />
+                </label>
+                <Button variant="outline" size="sm" onClick={burn}>校对完成并烧录字幕</Button>
+                {burnMsg && <span className="pf-muted" style={{ fontSize: 12, marginLeft: 8 }}>{burnMsg}</span>}
+              </div>}
+              <p className="pf-muted" style={{ fontSize: 12, marginTop: 8 }}>字幕为未校对草稿；校对后烧录只生成独立副本，母版不变。</p>
             </div>
           )}
         </div>
@@ -234,7 +290,7 @@ export function CommercialSettingsPage() {
           <ul style={{ fontSize: 13, color: 'var(--pf-muted)', margin: 0, paddingLeft: 18, lineHeight: 1.9 }}>
             <li>密钥：{provider?.has_atlas_api_key ? '已配置（不显示）' : '未配置'}</li>
             <li>已验证能力清单：{provider?.commercial_verified_models || '（空——未经真实契约验证，付费执行保持阻断）'}</li>
-            <li>模式：{provider?.commercial_mock_mode ? '开发模拟（mock）' : '真实'} · 付费总开关：{provider?.commercial_paid_execution_enabled ? '开' : '关（默认）'}</li>
+            <li>模式：{provider == null ? '运行模式未确认（需管理员权限）' : (provider.commercial_mock_mode ? '开发模拟（mock）' : '真实')} · 付费总开关：{provider == null ? '未确认' : (provider.commercial_paid_execution_enabled ? '开' : '关（默认）')}</li>
           </ul>
         </div>
 

@@ -38,6 +38,7 @@ const timecode = (ms: number) => {
 
 export default function CommercialTemplatesPage() {
   const [templates, setTemplates] = useState<TemplateItem[]>([])
+  const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [msg, setMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
@@ -51,9 +52,11 @@ export default function CommercialTemplatesPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
 
   const refresh = useCallback(() => {
+    setLoading(true); setErrorMsg('')
     commercialApi.listTemplates()
       .then(r => setTemplates(r.items))
       .catch(e => setErrorMsg(String(e instanceof Error ? e.message : e)))
+      .finally(() => setLoading(false))
   }, [])
   useEffect(refresh, [refresh])
 
@@ -110,6 +113,15 @@ export default function CommercialTemplatesPage() {
 
   const patchShot = (idx: number, patch: Partial<CalibShot>) =>
     setCalib(prev => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)))
+
+  const patchTime = (idx: number, key: 'start_ms' | 'end_ms', raw: string) => {
+    const value = Number(raw)
+    const decimals = raw.includes('.') ? raw.split('.')[1]?.length ?? 0 : 0
+    if (!Number.isFinite(value) || raw.trim() === '') { setErrorMsg('时间必须是有限数字'); return }
+    if (decimals > 3) { setErrorMsg('时间最多支持 3 位小数（毫秒精度）'); return }
+    patchShot(idx, { [key]: Math.round(value * 1000) })
+    setErrorMsg('')
+  }
 
   const seekTo = (ms: number) => {
     if (videoRef.current) videoRef.current.currentTime = msToSec(ms)
@@ -199,13 +211,13 @@ export default function CommercialTemplatesPage() {
                         <label>开始（秒）</label>
                         <input className="cv-input compact" type="number" step="0.001" min="0"
                           value={msToSec(s.start_ms)}
-                          onChange={e => patchShot(i, { start_ms: Math.round(Number(e.target.value) * 1000) })} />
+                          onChange={e => patchTime(i, 'start_ms', e.target.value)} />
                       </div>
                       <div className="cv-field" style={{ margin: 0, width: 130 }}>
                         <label>结束（秒）</label>
                         <input className="cv-input compact" type="number" step="0.001" min="0"
                           value={msToSec(s.end_ms)}
-                          onChange={e => patchShot(i, { end_ms: Math.round(Number(e.target.value) * 1000) })} />
+                           onChange={e => patchTime(i, 'end_ms', e.target.value)} />
                       </div>
                       <Button variant="outline" size="sm" onClick={() => seekTo(s.start_ms)}>定位到原片</Button>
                     </div>
@@ -236,6 +248,7 @@ export default function CommercialTemplatesPage() {
       )}
 
       <div className="pf-template-grid">
+        {loading && <p className="pf-muted">加载模板中…</p>}
         {templates.map(t => {
           const v = t.versions[0]
           const count = v?.shot_count ?? 0
@@ -274,7 +287,7 @@ export default function CommercialTemplatesPage() {
           )
         })}
       </div>
-      {templates.length === 0 && !analysis && (
+      {!loading && !errorMsg && templates.length === 0 && !analysis && (
         <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>
           还没有模板。上传一条参考视频开始第一次解析。
         </p>

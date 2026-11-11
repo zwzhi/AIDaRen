@@ -252,15 +252,20 @@ async def enrich_references(db, refs, *, user_id: int, team_id: int | None,
     for asset in assets:
         for url in _asset_urls(asset) & urls:
             assets_by_url.setdefault(url, []).append(asset)
+    authorized: list[dict] = []
     for reference, original in zip(references, originals):
         asset = assets_by_id.get(original.get("asset_id"))
         explicit_asset = asset is not None
         if asset is None:
             matches = assets_by_url.get(reference["url"], [])
             asset = matches[0] if len(matches) == 1 else None
-        if asset is not None:
-            reference["asset_id"] = asset.id
-            name = (_public_name(original.get("name")) if explicit_asset else None) or _public_name(asset.name)
-            if name:
-                reference["name"] = name
-    return references
+        if asset is None:
+            # 历史请求里的原始 URL 不是访问授权。只有能映射到当前用户/团队
+            # 可读的媒体资产时，才返回受控资产标识和预览地址。
+            continue
+        reference["asset_id"] = asset.id
+        name = (_public_name(original.get("name")) if explicit_asset else None) or _public_name(asset.name)
+        if name:
+            reference["name"] = name
+        authorized.append(reference)
+    return authorized
