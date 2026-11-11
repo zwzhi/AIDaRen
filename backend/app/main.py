@@ -447,6 +447,12 @@ async def _apply_schema_patches(engine_override: AsyncEngine | None = None) -> N
         cex = await _pg_columns(conn, "cv_exports")
         if cex and "kind" not in cex:
             await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN kind VARCHAR(24) DEFAULT 'master'"))
+        if cex and "srt_aligned" not in cex:
+            await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN srt_aligned BOOLEAN DEFAULT FALSE"))
+        if cex and "srt_edited_by" not in cex:
+            await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN srt_edited_by INTEGER"))
+        if cex and "srt_edited_at" not in cex:
+            await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN srt_edited_at TIMESTAMPTZ"))
         cbp = await _pg_columns(conn, "cv_budget_pools")
         if cbp and "scope" not in cbp:
             await conn.execute(text("ALTER TABLE cv_budget_pools ADD COLUMN scope VARCHAR(8) DEFAULT 'mock'"))

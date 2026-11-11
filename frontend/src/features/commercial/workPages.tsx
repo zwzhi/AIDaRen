@@ -9,6 +9,7 @@ import { API_BASE } from '../../api/client'
 import CommercialLayout, { CommercialPageHead, MockModeNote } from './CommercialLayout'
 import { commercialApi, type AttemptOut, type ProductionDetail } from './api'
 import { request } from './templatesApi'
+import { buildComposeSelections } from './composeSelection'
 import './commercial.css'
 
 type ProductionItem = {
@@ -94,23 +95,15 @@ export function CommercialTasksPage() {
 
   const compose = async () => {
     if (!detail || composing) return
-    setComposing(true)
-    const units = detail.plan?.units || []
-    const selections: { attempt_id: number; ranges: number[][] }[] = []
-    const missing: string[] = []
-    for (const u of units) {
-      const mine = detail.attempts
-        .filter(a => a.unit_key === u.unit_key && a.status === 'REVIEW_APPROVED')
-        .sort((x, y) => y.id - x.id)
-      if (!mine.length) { missing.push(u.unit_key); continue }
-      selections.push({ attempt_id: mine[0].id, ranges: (u.adopt_ranges || []).map(([, s, e]) => [s, e]) })
-    }
-    if (missing.length) {
-      setMsg(`缺少合格版本，不能导出完整成片：${missing.join('、')}（可在制作工作台重做后审核）`)
+    // 完整性校验在置忙之前：缺镜头直接提示并返回，按钮不进入忙碌态（可立即重试）
+    const plan = buildComposeSelections(detail.plan?.units || [], detail.attempts)
+    if (!plan.ok) {
+      setMsg(`缺少合格版本，不能导出完整成片：${plan.missing.join('、')}（可在制作工作台重做后审核）`)
       return
     }
+    setComposing(true)
     try {
-      const r = await commercialApi.compose(detail.id, selections, true)
+      const r = await commercialApi.compose(detail.id, plan.selections, true)
       setExportId(r.export_id); setExportKind(r.kind)
       setMsg(`合成完成：导出 #${r.export_id}（${r.kind === 'partial_preview' ? '部分预览' : '完整成片'}，${(r.total_adopt_ms / 1000).toFixed(1)}s）`)
       openDetail(activeId!)

@@ -224,12 +224,11 @@ type ProductionItem = {
               <p className="pf-muted" style={{ fontSize: 12, marginTop: 8 }}>或用下方①区新建作品。</p>
             </div>
           )}
-          <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
-          </div>
         </>
       )}
 
-<div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
+      {productionId == null && (
+        <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
         <h3 style={{ margin: '0 0 10px', fontSize: 15 }}>① 选择模板与素材</h3>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
           <div className="cv-field" style={{ margin: 0, minWidth: 220 }}>
@@ -277,7 +276,8 @@ type ProductionItem = {
         {capsError && <p style={{ fontSize: 13, color: '#b3261e', margin: '10px 0 0' }}>能力档案加载失败：{capsError}。请刷新后重试。</p>}
         {msg && <p style={{ fontSize: 13, color: msgKind === 'error' ? '#b3261e' : 'var(--pf-ink)', margin: '10px 0 0' }}>{msg}</p>}
         {caps && <p className="pf-muted" style={{ fontSize: 12, margin: '8px 0 0' }}>能力档案 {caps.capability_version} · {caps.capability_verified ? '已验证' : 'DRAFT，未完成真实契约验证'} · 分辨率：{caps.resolutions.join(' / ') || '无'}</p>}
-      </div>
+        </div>
+      )}
 
       {/* ② 文案与分镜 */}
       {productionId && detail && (

@@ -826,12 +826,36 @@ async def generate_unit(
 @router.get("/productions", summary="作品列表（任务页入口）")
 async def list_productions(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+    limit: int = 50, offset: int = 0,
 ):
     from app.models_commercial import CvProduct, CvProductVersion, CvTemplate, CvTemplateVersion
 
+    # 先在查询层限定可读范围（所有者；管理员放宽为全站），再排序分页；
+    # 避免先取全站最近 50 条再过滤导致他人高产时自己的旧作品被挤出列表。
+    readable_ids = list((await db.execute(
+        select(CvProduction.id).where(CvProduction.created_by == user.id)
+        .order_by(CvProduction.id.desc())
+    )).scalars().all())
+    if (user.role or "user") == "admin":
+        base = select(CvProduction).order_by(CvProduction.id.desc())
+    else:
+        # 收敛范围：本人作品 + 基于本人模板创建的作品（协作者复用模板的可见场景）
+        shared = list((await db.execute(
+            select(CvProduction.id).join(
+                CvTemplateVersion, CvProduction.template_version_id == CvTemplateVersion.id
+            ).join(
+                CvTemplate, CvTemplateVersion.template_id == CvTemplate.id
+            ).where(
+                CvTemplate.created_by == user.id,
+                CvProduction.created_by != user.id,
+            ).order_by(CvProduction.id.desc())
+        )).scalars().all())
+        allowed = sorted(set(readable_ids) | set(shared), reverse=True)
+        base = select(CvProduction).where(CvProduction.id.in_(allowed or [-1])).order_by(CvProduction.id.desc())
     rows = (await db.execute(
-        select(CvProduction).order_by(CvProduction.id.desc()).limit(50)
+        base.offset(max(0, offset)).limit(min(100, max(1, limit)))
     )).scalars().all()
+    # 权限复核保留为兜底（不作为过滤主路径）
     rows = [row for row in rows if await _can_read_production(db, row, user)]
     items = []
     for pr in rows:
@@ -871,6 +895,10 @@ async def get_production(
             [str(i) for i in own_attempt_ids] or ["-1"])
         ).order_by(CvUsageLedger.id.desc())
     )).scalars().all() if own_attempt_ids else []
+    # 费用模拟标记来自尝试证据（MOCK- 前缀），不随当前系统模式变化；
+    # 无尝试时退回当前配置（此时无历史事实可依）。
+    attempt_mock_flags = [str(a.provider_prediction_id or "").startswith("MOCK-") for a in attempts]
+    costs_mock = all(attempt_mock_flags) if attempt_mock_flags else mock_provider.mock_enabled()
     latest_export = (await db.execute(
         select(CvExport).where(CvExport.production_id == production.id)
         .order_by(CvExport.id.desc()).limit(1)
@@ -898,7 +926,8 @@ async def get_production(
         "costs": {
             "total_usd": str(total_usd), "pending_usd": str(pending),
             "settlement_note": "待结算金额为估算（真实账单以联调后对账为准）",
-            "mock": mock_provider.mock_enabled(),
+            "mock": costs_mock,
+            "mock_basis": "attempts" if attempt_mock_flags else "current_config",
         },
     }
 
@@ -1122,7 +1151,8 @@ async def get_export(
         "kind": export.kind or "master",
         "total_adopt_ms": export.total_adopt_ms,
         "srt_content": export.srt_content,
-        "srt_aligned": False,  # 草稿默认未对齐，需人工校对后烧录
+        "srt_aligned": bool(export.srt_aligned),  # 烧录时写入的真实校对状态
+        "srt_edited_at": export.srt_edited_at.isoformat() if export.srt_edited_at else None,
         "subtitled_path": export.subtitled_path,
         "selections": export.selections_json,
         "created_at": export.created_at.isoformat() if export.created_at else None,
@@ -1164,8 +1194,16 @@ async def burn_export(
     finally:
         pass  # srt 留档于导出目录，便于复现烧录参数
     export.subtitled_path = target
+    # 留存本次烧录实际使用的字幕与校对状态（重开页面不再显示旧草稿/未校对）
+    from datetime import UTC as _UTC, datetime as _dt
+
+    export.srt_content = srt
+    export.srt_aligned = True
+    export.srt_edited_by = user.id
+    export.srt_edited_at = _dt.now(_UTC)
     await db.commit()
-    return {"export_id": export.id, "subtitled_path": target, "master_immutable": True}
+    return {"export_id": export.id, "subtitled_path": target, "master_immutable": True,
+            "srt_aligned": True, "srt_edited_at": export.srt_edited_at.isoformat()}
 
 
 @router.get("/exports/{export_id}/download", summary="下载成片（母版或烧录版）")

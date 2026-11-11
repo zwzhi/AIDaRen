@@ -3,7 +3,7 @@
  * 数据来自 GET /api/commercial/templates/{versionId}（冻结快照）。
  */
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import Button from '../../components/ui/Button'
 import CommercialLayout, { CommercialPageHead, MockModeNote } from './CommercialLayout'
 import { request } from './templatesApi'
@@ -24,6 +24,7 @@ const timecode = (ms: number) => {
 
 export default function TemplateVersionDetail() {
   const { versionId } = useParams()
+  const nav = useNavigate()
   const [detail, setDetail] = useState<VersionDetail | null>(null)
   const [error, setError] = useState('')
   const [editing, setEditing] = useState(false)
@@ -86,6 +87,8 @@ export default function TemplateVersionDetail() {
       setEditing(false)
       const refreshed = await request<VersionDetail>(`/api/commercial/templates/${result.version_id}`)
       setDetail(refreshed); setDraftShots((refreshed.structure?.shots ?? []) as Shot[])
+      // 地址同步到新发布的版本，刷新后仍停留在新版本（不留在旧版本 URL）
+      nav(`/commercial/templates/${refreshed.version_id}`, { replace: true })
     } catch (e) { setMessage(e instanceof Error ? e.message : String(e)) } finally { setSaving(false) }
   }
 
@@ -151,7 +154,7 @@ export default function TemplateVersionDetail() {
           })}
           {editing && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <Button variant="outline" disabled={saving} onClick={saveDraft}>保存草稿</Button>
-            <Button variant="lime" disabled={saving} onClick={publishV2}>{saving ? '发布中…' : '保存并发布 V2'}</Button>
+            <Button variant="lime" disabled={saving} onClick={publishV2}>{saving ? '发布中…' : `保存并发布 V${detail.version + 1}`}</Button>
           </div>}
           {message && <p className="pf-muted" style={{ fontSize: 13 }}>{message}</p>}
           <p className="pf-muted" style={{ fontSize: 12 }}>

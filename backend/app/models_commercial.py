@@ -422,5 +422,9 @@ class CvExport(Base):
     total_adopt_ms: Mapped[int] = mapped_column(Integer, default=0)
     selections_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     srt_content: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 字幕校对状态与编辑留痕（烧录时写入；历史导出默认未校对草稿）
+    srt_aligned: Mapped[bool] = mapped_column(Boolean, default=False)
+    srt_edited_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    srt_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
