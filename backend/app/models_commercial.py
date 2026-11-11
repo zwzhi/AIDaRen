@@ -41,6 +41,11 @@ class CvMediaAsset(Base):
     derived_from_asset_id: Mapped[int | None] = mapped_column(
         ForeignKey("cv_media_assets.id"), nullable=True, index=True
     )
+    # Deterministic source-frame lineage.  ``source_time_ms`` is only set for
+    # frames extracted from a reference video, while ``source_metadata`` keeps
+    # extractor details extensible without changing the asset identity.
+    source_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    source_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 权利状态与授权范围
     rights_status: Mapped[str] = mapped_column(String(16), default="authorized")
     rights_declaration: Mapped[str] = mapped_column(Text, default="")
@@ -244,6 +249,16 @@ class CvCostQuote(Base):
     replication_project_id: Mapped[int | None] = mapped_column(
         ForeignKey("cv_replication_projects.id"), nullable=True, index=True
     )
+    script_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_script_versions.id"), nullable=True, index=True
+    )
+    anchor_set_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_anchor_sets.id"), nullable=True, index=True
+    )
+    voice_render_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_voice_renders.id"), nullable=True, index=True
+    )
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
     status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
     max_amount: Mapped[Decimal | None] = mapped_column(Numeric(20, 8), nullable=True)
     accepted_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
@@ -315,6 +330,19 @@ class CvGenerationAttempt(Base):
     params_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     quote_id: Mapped[int | None] = mapped_column(ForeignKey("cv_cost_quotes.id"), nullable=True)
     reservation_id: Mapped[int | None] = mapped_column(ForeignKey("cv_budget_reservations.id"), nullable=True)
+    replication_project_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_replication_projects.id"), nullable=True, index=True
+    )
+    script_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_script_versions.id"), nullable=True, index=True
+    )
+    anchor_set_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_anchor_sets.id"), nullable=True, index=True
+    )
+    voice_render_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_voice_renders.id"), nullable=True, index=True
+    )
+    preview_or_final: Mapped[str] = mapped_column(String(16), default="preview")
     # §9.2 状态
     status: Mapped[str] = mapped_column(String(32), default="APPROVED", index=True)
     provider_prediction_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
@@ -442,6 +470,168 @@ class CvReplicationProject(Base):
     )
 
 
+class CvShotGraph(Base):
+    """Versioned, externally ordered shot graph produced from a source video."""
+
+    __tablename__ = "cv_shot_graphs"
+    __table_args__ = (
+        UniqueConstraint("replication_project_id", "revision", "shot_key", name="uq_cv_shot_graph_revision_key"),
+        Index("ix_cv_shot_graph_project_status", "replication_project_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    replication_project_id: Mapped[int] = mapped_column(
+        ForeignKey("cv_replication_projects.id"), index=True
+    )
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    shot_key: Mapped[str] = mapped_column(String(96))
+    start_ms: Mapped[int] = mapped_column(Integer)
+    end_ms: Mapped[int] = mapped_column(Integer)
+    purpose: Mapped[str] = mapped_column(String(64), default="")
+    complexity: Mapped[str] = mapped_column(String(24), default="simple")
+    camera_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    composition_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    action_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    emotion_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    product_presence: Mapped[str] = mapped_column(String(16), default="unknown")
+    product_confidence: Mapped[Decimal | None] = mapped_column(Numeric(8, 5), nullable=True)
+    product_evidence_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    anchor_candidates_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    source_span_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    analysis_version: Mapped[str] = mapped_column(String(32), default="1")
+    status: Mapped[str] = mapped_column(String(24), default="active", index=True)
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvScriptVersion(Base):
+    """Immutable script revision tied to a shot graph revision."""
+
+    __tablename__ = "cv_script_versions"
+    __table_args__ = (
+        UniqueConstraint("replication_project_id", "version", name="uq_cv_script_version"),
+        Index("ix_cv_script_project_status", "replication_project_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    replication_project_id: Mapped[int] = mapped_column(
+        ForeignKey("cv_replication_projects.id"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    shot_graph_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    mode: Mapped[str] = mapped_column(String(32), default="structural_rewrite")
+    script_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    claim_ids_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    prompt_version: Mapped[str] = mapped_column(String(32), default="1")
+    model_id: Mapped[str] = mapped_column(String(96), default="")
+    model_version: Mapped[str] = mapped_column(String(96), default="")
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
+    status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvAnchorSet(Base):
+    """Immutable candidate or approved anchor-frame revision."""
+
+    __tablename__ = "cv_anchor_sets"
+    __table_args__ = (
+        UniqueConstraint("replication_project_id", "version", name="uq_cv_anchor_set_version"),
+        Index("ix_cv_anchor_set_project_status", "replication_project_id", "status"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    replication_project_id: Mapped[int] = mapped_column(
+        ForeignKey("cv_replication_projects.id"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer)
+    shot_graph_revision: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="candidate", index=True)
+    mode: Mapped[str] = mapped_column(String(32), default="structural_rewrite")
+    frame_count: Mapped[int] = mapped_column(Integer, default=0)
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvAnchorFrame(Base):
+    """Single source or edited frame with complete lineage."""
+
+    __tablename__ = "cv_anchor_frames"
+    __table_args__ = (
+        UniqueConstraint("anchor_set_id", "shot_key", "sequence", name="uq_cv_anchor_frame_sequence"),
+        Index("ix_cv_anchor_frame_set_shot", "anchor_set_id", "shot_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    anchor_set_id: Mapped[int] = mapped_column(ForeignKey("cv_anchor_sets.id"), index=True)
+    shot_key: Mapped[str] = mapped_column(String(96))
+    sequence: Mapped[int] = mapped_column(Integer)
+    time_ms: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str] = mapped_column(String(32), default="source")
+    source_asset_id: Mapped[int | None] = mapped_column(ForeignKey("cv_media_assets.id"), nullable=True, index=True)
+    edited_asset_id: Mapped[int | None] = mapped_column(ForeignKey("cv_media_assets.id"), nullable=True, index=True)
+    parent_anchor_id: Mapped[int | None] = mapped_column(ForeignKey("cv_anchor_frames.id"), nullable=True, index=True)
+    actor_version_id: Mapped[int | None] = mapped_column(ForeignKey("cv_actor_versions.id"), nullable=True)
+    product_version_id: Mapped[int | None] = mapped_column(ForeignKey("cv_product_versions.id"), nullable=True)
+    provider: Mapped[str] = mapped_column(String(32), default="deterministic")
+    model_id: Mapped[str] = mapped_column(String(96), default="")
+    model_version: Mapped[str] = mapped_column(String(96), default="")
+    prompt_hash: Mapped[str] = mapped_column(String(64), default="")
+    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_status: Mapped[str] = mapped_column(String(24), default="pending")
+    review_status: Mapped[str] = mapped_column(String(24), default="pending")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvVoiceRender(Base):
+    """Versioned voice render tied to script input."""
+
+    __tablename__ = "cv_voice_renders"
+    __table_args__ = (Index("ix_cv_voice_render_project_status", "replication_project_id", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    replication_project_id: Mapped[int] = mapped_column(ForeignKey("cv_replication_projects.id"), index=True)
+    script_version_id: Mapped[int | None] = mapped_column(ForeignKey("cv_script_versions.id"), nullable=True, index=True)
+    voice_profile_id: Mapped[int | None] = mapped_column(ForeignKey("cv_voice_profiles.id"), nullable=True, index=True)
+    model_id: Mapped[str] = mapped_column(String(96), default="")
+    model_version: Mapped[str] = mapped_column(String(96), default="")
+    audio_asset_id: Mapped[int | None] = mapped_column(ForeignKey("cv_media_assets.id"), nullable=True, index=True)
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    script_hash: Mapped[str] = mapped_column(String(64), default="")
+    rights_evidence_id: Mapped[int | None] = mapped_column(ForeignKey("cv_rights_evidence.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(24), default="pending", index=True)
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class CvSubtitleVersion(Base):
+    """Subtitle timeline revision shared by preview and final export."""
+
+    __tablename__ = "cv_subtitle_versions"
+    __table_args__ = (Index("ix_cv_subtitle_project_status", "replication_project_id", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    replication_project_id: Mapped[int] = mapped_column(ForeignKey("cv_replication_projects.id"), index=True)
+    script_version_id: Mapped[int | None] = mapped_column(ForeignKey("cv_script_versions.id"), nullable=True, index=True)
+    voice_render_id: Mapped[int | None] = mapped_column(ForeignKey("cv_voice_renders.id"), nullable=True, index=True)
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    subtitles_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    style_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    language: Mapped[str] = mapped_column(String(16), default="zh-CN")
+    status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
+    invalidation_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
 class CvRightsEvidence(Base):
     """权利凭证快照，支持视频、人物、声音、音乐和商品素材。"""
 
@@ -486,5 +676,15 @@ class CvExport(Base):
     srt_aligned: Mapped[bool] = mapped_column(Boolean, default=False)
     srt_edited_by: Mapped[int | None] = mapped_column(ForeignKey("users.id"), nullable=True)
     srt_edited_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    script_version_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_script_versions.id"), nullable=True, index=True
+    )
+    anchor_set_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_anchor_sets.id"), nullable=True, index=True
+    )
+    voice_render_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_voice_renders.id"), nullable=True, index=True
+    )
+    quality_check_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
