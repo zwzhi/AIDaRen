@@ -26,7 +26,7 @@
 
 ## 3. 浏览器验收记录（截图 `artifacts/acceptance/screenshots/t08_*.png`）
 
-账号：`demo@printfilm-demo.com / Demo2026x`（admin；密码仅存本地演示库，非密钥）
+账号：`demo@printfilm-demo.com / （演示口令A·本地开发库专用）`（admin；密码仅存本地演示库，非密钥）
 
 1. 设置与费用：预算池 $50 保存成功；能力状态明确"真实契约未验证（BLOCKED）"
 2. 模板库：上传 30s 参考片 → Mock 解析 3 镜头 → 发布 T1（V1）
