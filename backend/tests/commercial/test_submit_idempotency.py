@@ -99,6 +99,8 @@ async def test_budget_reserved_once_on_replay(db_session, owner) -> None:
         client_request_id="click-003", created_by=owner.id,
     )
     reserved = (await db_session.execute(
-        select(func.count()).select_from(CvBudgetReservation)
+        select(func.count()).select_from(CvBudgetReservation).where(
+            CvBudgetReservation.quote_id == quote.id,
+        )
     )).scalar_one()
     assert reserved == 1

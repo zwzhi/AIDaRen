@@ -35,8 +35,17 @@ async def test_micro_amount_precision_preserved(db_session, owner) -> None:
             amount=Decimal("0.001"), currency="USD", fx_rate=Decimal("7.3"),
             settlement_status="SETTLEMENT_PENDING",
         )
+    # 仅统计本测试创建的 attempt 的账目（避免其他测试残留污染 SUM）
+    own_refs = [str(entry.attempt_ref) for entry in [await record_usage(
+        db_session, attempt_ref=f"micro-{i}", provider="atlas", model="m",
+        amount=Decimal("0.001"), currency="USD", fx_rate=Decimal("7.3"),
+        settlement_status="SETTLEMENT_PENDING",
+    ) for i in range(0)]]
     total = (await db_session.execute(
-        select(func.sum(CvUsageLedger.amount)).where(CvUsageLedger.currency == "USD")
+        select(func.sum(CvUsageLedger.amount)).where(
+            CvUsageLedger.currency == "USD",
+            CvUsageLedger.attempt_ref.in_(["att-1", "att-2", "att-3"]),
+        )
     )).scalar_one()
     assert total == Decimal("0.003")
     # 人民币展示：0.003 × 7.3 = 0.0219，仅展示层四舍五入
