@@ -22,6 +22,8 @@ class ModelCapabilityProfile:
     label: str
     configured_model: str
     capability_verified: bool
+    probe_status: str = "unverified"
+    probe_error: str | None = None
     notes: dict[str, Any] = field(default_factory=dict)
 
 
@@ -45,6 +47,7 @@ def commercial_capability_profiles() -> list[ModelCapabilityProfile]:
                 label=label,
                 configured_model=model,
                 capability_verified=bool(model) and model in verified,
+                probe_status="verified" if bool(model) and model in verified else "unverified",
             )
         )
     return profiles

@@ -453,6 +453,12 @@ async def _apply_schema_patches(engine_override: AsyncEngine | None = None) -> N
             await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN srt_edited_by INTEGER"))
         if cex and "srt_edited_at" not in cex:
             await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN srt_edited_at TIMESTAMPTZ"))
+        if cex and "render_batch_id" not in cex:
+            await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN render_batch_id INTEGER REFERENCES cv_render_batches(id)"))
+        if cex and "frozen_version_hash" not in cex:
+            await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN frozen_version_hash VARCHAR(64) DEFAULT ''"))
+        if cex and "segment_outputs_json" not in cex:
+            await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN segment_outputs_json JSON"))
         cbp = await _pg_columns(conn, "cv_budget_pools")
         if cbp and "scope" not in cbp:
             await conn.execute(text("ALTER TABLE cv_budget_pools ADD COLUMN scope VARCHAR(8) DEFAULT 'mock'"))

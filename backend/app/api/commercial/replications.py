@@ -24,8 +24,10 @@ from app.models_commercial import (
     CvScriptVersion,
     CvShotGraph,
     CvVoiceRender,
+    CvSubtitleVersion,
     CvRenderBatch,
     CvRenderSegment,
+    CvExport,
 )
 from app.schemas_commercial import ScriptBatchPayload, ScriptVersionPayload, ShotGraphPayload
 from app.services.commercial.replication import (
@@ -36,6 +38,13 @@ from app.services.commercial.replication import (
 )
 from app.services.providers.atlas.gemini import GeminiAdapter
 from app.services.commercial.segment_planner import plan_long_video
+from app.services.commercial.render_batch import (
+    RenderBatchInputError,
+    build_render_batch_plan,
+    compose_render_batch,
+    validate_render_batch_inputs,
+)
+from app.services.commercial.generation import apply_render_segment_result
 
 router = APIRouter()
 
@@ -125,26 +134,39 @@ async def create_render_plan(
         "end_ms": row.end_ms,
         "action_neutral_points_ms": row.anchor_candidates_json or [],
     } for row in rows]}
-    plan = plan_long_video(
+    script = await db.get(CvScriptVersion, project.current_script_version_id) if project.current_script_version_id else None
+    anchors = await db.get(CvAnchorSet, project.current_anchor_set_id) if project.current_anchor_set_id else None
+    voice = await db.get(CvVoiceRender, project.current_voice_render_id) if project.current_voice_render_id else None
+    subtitle = await db.scalar(select(CvSubtitleVersion).where(
+        CvSubtitleVersion.replication_project_id == project.id,
+        CvSubtitleVersion.status.in_(["approved", "frozen"]),
+    ).order_by(CvSubtitleVersion.version.desc()).limit(1))
+    plan = build_render_batch_plan(
         graph,
         source_duration_ms=body.source_duration_ms,
         master_voice_track_id=body.master_voice_track_id,
         overlap_ms=body.overlap_ms,
+        script_version_id=script.id if script else None,
+        anchor_set_id=anchors.id if anchors else None,
+        voice_render_id=voice.id if voice else None,
+        subtitle_version_id=subtitle.id if subtitle else None,
     )
     batch = CvRenderBatch(
         replication_project_id=project.id,
-        script_version_id=project.current_script_version_id,
-        anchor_set_id=project.current_anchor_set_id,
-        voice_render_id=project.current_voice_render_id,
+        script_version_id=script.id if script else None,
+        anchor_set_id=anchors.id if anchors else None,
+        voice_render_id=voice.id if voice else None,
+        subtitle_version_id=subtitle.id if subtitle else None,
         stage="preview",
-        status=plan["status"],
-        master_voice_track_id=body.master_voice_track_id,
-        total_duration_ms=plan["source_duration_ms"],
+        status=plan.status,
+        master_voice_track_id=plan.master_voice_track_id,
+        total_duration_ms=plan.source_duration_ms,
+        frozen_version_hash=plan.frozen_version_hash,
         created_by=user.id,
     )
     db.add(batch)
     await db.flush()
-    for segment in plan["segments"]:
+    for segment in plan.segments:
         db.add(CvRenderSegment(
             render_batch_id=batch.id,
             segment_index=segment["segment_index"],
@@ -159,7 +181,17 @@ async def create_render_plan(
             status="needs_human_review" if segment["requires_manual_review"] else "pending",
         ))
     await db.commit()
-    return {"id": batch.id, **plan}
+    return {
+        "id": batch.id,
+        "status": plan.status,
+        "source_duration_ms": plan.source_duration_ms,
+        "master_voice_track_id": plan.master_voice_track_id,
+        "frozen_version_hash": plan.frozen_version_hash,
+        "requires_manual_review": plan.requires_manual_review,
+        "review_reasons": list(plan.review_reasons),
+        "segments": [dict(item) for item in plan.segments],
+        "timeline": [dict(item) for item in plan.timeline],
+    }
 
 
 @router.get("/render-batches/{batch_id}", summary="读取长视频分段计划")
@@ -182,6 +214,8 @@ async def get_render_plan(
         "status": batch.status,
         "master_voice_track_id": batch.master_voice_track_id,
         "total_duration_ms": batch.total_duration_ms,
+        "subtitle_version_id": batch.subtitle_version_id,
+        "frozen_version_hash": batch.frozen_version_hash,
         "segments": [{
             "segment_index": row.segment_index,
             "shot_keys": row.shot_keys_json or [],
@@ -194,6 +228,7 @@ async def get_render_plan(
             "segment_audio_end_ms": row.segment_audio_end_ms,
             "status": row.status,
             "provider_task_id": row.provider_task_id,
+            "output_asset_id": row.output_asset_id,
             "error_code": row.error_code,
         } for row in segments],
     }
@@ -527,15 +562,175 @@ async def create_preview(
     script = await db.get(CvScriptVersion, project.current_script_version_id) if project.current_script_version_id else None
     anchors = await db.get(CvAnchorSet, project.current_anchor_set_id) if project.current_anchor_set_id else None
     voice = await db.get(CvVoiceRender, project.current_voice_render_id) if project.current_voice_render_id else None
-    if script is None or script.status != "approved":
-        raise HTTPException(status_code=409, detail="脚本尚未批准")
-    if anchors is None or anchors.status != "approved":
-        raise HTTPException(status_code=409, detail="锚帧尚未批准")
-    if voice is None or voice.status != "approved":
-        raise HTTPException(status_code=409, detail="声音尚未批准")
+    subtitle = await db.scalar(select(CvSubtitleVersion).where(
+        CvSubtitleVersion.replication_project_id == project.id,
+        CvSubtitleVersion.status.in_(["approved", "frozen"]),
+    ).order_by(CvSubtitleVersion.version.desc()).limit(1))
+    batch = await db.scalar(select(CvRenderBatch).where(
+        CvRenderBatch.replication_project_id == project.id,
+        CvRenderBatch.stage == "preview",
+    ).order_by(CvRenderBatch.id.desc()).limit(1))
+    if batch is None:
+        raise HTTPException(status_code=409, detail="尚未生成 ready render batch")
+    try:
+        validate_render_batch_inputs(
+            {
+                "script": script.status if script else "",
+                "anchor_set": anchors.status if anchors else "",
+                "voice": voice.status if voice else "",
+                "subtitle": subtitle.status if subtitle else "",
+            },
+            batch_status=batch.status,
+        )
+    except RenderBatchInputError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     project.status = "preview_ready"
     project.expected_version += 1
     await db.commit()
-    return {"id": project.id, "status": "queued", "recovery_stage": "preview"}
+    return {
+        "id": project.id,
+        "status": "queued",
+        "recovery_stage": "preview",
+        "render_batch_id": batch.id,
+        "frozen_version_hash": batch.frozen_version_hash,
+    }
+
+
+class RenderSegmentCompleteBody(BaseModel):
+    provider_task_id: str | None = None
+    output_asset_id: int | None = Field(default=None, gt=0)
+    status: str = Field(default="generated", pattern="^(pending|provider_running|generated|failed)$")
+    error_code: str | None = None
+
+
+@router.post("/render-batches/{batch_id}/segments/{segment_index}", summary="更新渲染分段状态")
+async def update_render_segment(
+    batch_id: int,
+    segment_index: int,
+    body: RenderSegmentCompleteBody,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    batch = await db.get(CvRenderBatch, batch_id)
+    if batch is None:
+        raise HTTPException(status_code=404, detail="渲染批次不存在")
+    await _get_project(db, batch.replication_project_id, user)
+    segment = await db.scalar(select(CvRenderSegment).where(
+        CvRenderSegment.render_batch_id == batch.id,
+        CvRenderSegment.segment_index == segment_index,
+    ))
+    if segment is None:
+        raise HTTPException(status_code=404, detail="渲染分段不存在")
+    if body.status == "generated" and body.output_asset_id is None:
+        raise HTTPException(status_code=422, detail="generated 分段必须提供 output_asset_id")
+    await apply_render_segment_result(
+        db,
+        segment,
+        provider_task_id=body.provider_task_id,
+        output_asset_id=body.output_asset_id,
+        error_code=body.error_code,
+    )
+    segment.status = body.status
+    await db.commit()
+    return {
+        "batch_id": batch.id,
+        "segment_index": segment.segment_index,
+        "status": segment.status,
+        "provider_task_id": segment.provider_task_id,
+        "output_asset_id": segment.output_asset_id,
+    }
+
+
+async def _load_ready_render_context(
+    project_id: int, db: AsyncSession, user: User
+) -> tuple[CvReplicationProject, CvRenderBatch, list[CvRenderSegment]]:
+    project = await _get_project(db, project_id, user)
+    script = await db.get(CvScriptVersion, project.current_script_version_id) if project.current_script_version_id else None
+    anchors = await db.get(CvAnchorSet, project.current_anchor_set_id) if project.current_anchor_set_id else None
+    voice = await db.get(CvVoiceRender, project.current_voice_render_id) if project.current_voice_render_id else None
+    subtitle = await db.scalar(select(CvSubtitleVersion).where(
+        CvSubtitleVersion.replication_project_id == project.id,
+        CvSubtitleVersion.status.in_(["approved", "frozen"]),
+    ).order_by(CvSubtitleVersion.version.desc()).limit(1))
+    batch = await db.scalar(select(CvRenderBatch).where(
+        CvRenderBatch.replication_project_id == project.id,
+        CvRenderBatch.status == "ready",
+    ).order_by(CvRenderBatch.id.desc()).limit(1))
+    if batch is None:
+        raise HTTPException(status_code=409, detail="尚未生成 ready render batch")
+    try:
+        validate_render_batch_inputs(
+            {
+                "script": script.status if script else "",
+                "anchor_set": anchors.status if anchors else "",
+                "voice": voice.status if voice else "",
+                "subtitle": subtitle.status if subtitle else "",
+            },
+            batch_status=batch.status,
+        )
+    except RenderBatchInputError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    segments = list((await db.execute(select(CvRenderSegment).where(
+        CvRenderSegment.render_batch_id == batch.id
+    ).order_by(CvRenderSegment.segment_index))).scalars().all())
+    return project, batch, segments
+
+
+@router.post("/replications/{project_id}/finalize", summary="完成复刻长视频合成")
+async def finalize_replication(
+    project_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project, batch, segments = await _load_ready_render_context(project_id, db, user)
+    if any(segment.status != "generated" for segment in segments):
+        raise HTTPException(status_code=409, detail="仍有渲染分段未完成")
+    composition_batch = {
+        "frozen_version_hash": batch.frozen_version_hash,
+        "segments": [
+            {
+                "segment_index": segment.segment_index,
+                "shot_key": (segment.shot_keys_json or [""])[0],
+                "start_ms": segment.segment_audio_start_ms,
+                "end_ms": segment.segment_audio_end_ms,
+            }
+            for segment in segments
+        ],
+    }
+    try:
+        composition = compose_render_batch(
+            composition_batch,
+            [{"segment_index": segment.segment_index, "output_asset_id": segment.output_asset_id}
+             for segment in segments],
+        )
+    except RenderBatchInputError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    export = CvExport(
+        production_id=project.production_id,
+        kind="master",
+        master_path=f"render-batch://{batch.id}/master.mp4",
+        total_adopt_ms=composition.total_duration_ms,
+        selections_json={"render_batch_id": batch.id},
+        script_version_id=batch.script_version_id,
+        anchor_set_id=batch.anchor_set_id,
+        voice_render_id=batch.voice_render_id,
+        render_batch_id=batch.id,
+        frozen_version_hash=composition.frozen_version_hash,
+        segment_outputs_json=[dict(segment) for segment in composition.segments],
+        quality_check_json=composition.qa_summary,
+        created_by=user.id,
+    )
+    db.add(export)
+    batch.stage = "final"
+    batch.status = "completed"
+    await db.commit()
+    return {
+        "export_id": export.id,
+        "render_batch_id": batch.id,
+        "master_path": export.master_path,
+        "frozen_version_hash": export.frozen_version_hash,
+        "segment_outputs": export.segment_outputs_json,
+        "quality_check": export.quality_check_json,
+    }
 
 

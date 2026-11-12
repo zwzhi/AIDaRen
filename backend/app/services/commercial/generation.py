@@ -32,6 +32,51 @@ logger = logging.getLogger("app.commercial.generation")
 EVENT_PENDING = "generation.pending"
 EVENT_SETTLED = "generation.settled"
 
+RENDER_SEGMENT_TERMINAL_STATES = {"generated", "failed"}
+
+
+def render_segment_recovery_state(
+    *, provider_task_id: str | None, output_asset_id: int | None, error_code: str | None = None
+) -> tuple[str, str | None]:
+    """Map a recoverable generation result to the persisted segment state.
+
+    Existing provider task IDs are retained so a worker restart resumes polling
+    instead of submitting a second paid request.
+    """
+    if output_asset_id is not None:
+        return "generated", error_code
+    if error_code:
+        return "failed", error_code
+    if provider_task_id:
+        return "provider_running", None
+    return "pending", None
+
+
+async def apply_render_segment_result(
+    db: AsyncSession,
+    segment: Any,
+    *,
+    provider_task_id: str | None = None,
+    output_asset_id: int | None = None,
+    error_code: str | None = None,
+) -> str:
+    """Persist a segment result idempotently for worker recovery."""
+    if getattr(segment, "status", "") == "generated" and getattr(segment, "output_asset_id", None):
+        return "generated"
+    status, normalized_error = render_segment_recovery_state(
+        provider_task_id=provider_task_id,
+        output_asset_id=output_asset_id,
+        error_code=error_code,
+    )
+    if provider_task_id:
+        segment.provider_task_id = provider_task_id
+    if output_asset_id is not None:
+        segment.output_asset_id = output_asset_id
+    segment.error_code = normalized_error
+    segment.status = status
+    await db.flush()
+    return status
+
 
 async def _release_reservation_safe(db: AsyncSession, attempt: CvGenerationAttempt) -> None:
     """释放 attempt 的预留（仅用于确未产生上游费用的失败/取消）。

@@ -274,6 +274,9 @@ async def apply_commercial_schema_patches(conn) -> None:
             "script_version_id": "INTEGER REFERENCES cv_script_versions(id)",
             "anchor_set_id": "INTEGER REFERENCES cv_anchor_sets(id)",
             "voice_render_id": "INTEGER REFERENCES cv_voice_renders(id)",
+            "render_batch_id": "INTEGER REFERENCES cv_render_batches(id)",
+            "frozen_version_hash": "VARCHAR(64) NOT NULL DEFAULT ''",
+            "segment_outputs_json": "JSON",
             "quality_check_json": "JSON",
         },
     }

@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -162,6 +164,118 @@ class MockTTSAdapter:
         return MockSynthesisResult(script_hash, duration_ms, voice_version, payload, audio_bytes)
 
 
+@dataclass(frozen=True)
+class VoiceCapabilities:
+    """Capability status for native provider voice and the local TTS fallback."""
+
+    model_id: str
+    native_provider: str = "tts"
+    native_voice_supported: bool = False
+    tts_fallback_supported: bool = True
+    capability_verified: bool = False
+    probe_status: str = "unverified"
+    probe_source: str | None = None
+    probe_error: str | None = None
+
+    @property
+    def capability_status(self) -> str:
+        return self.probe_status
+
+
+class VoiceAdapter:
+    """Read-only voice capability adapter.
+
+    A real probe uses the provider capability endpoint. It never sends text or
+    audio synthesis input, so a failed probe cannot create a billable render.
+    The adapter keeps native H3 voice and TTS fallback as separate statuses.
+    """
+
+    def __init__(
+        self,
+        *,
+        model_id: str = "mock-tts",
+        mode: str = "mock",
+        base_url: str = "",
+        api_key: str = "",
+        capabilities: VoiceCapabilities | None = None,
+    ) -> None:
+        self.model_id = str(model_id or "mock-tts")
+        self.mode = str(mode or "mock").lower()
+        self.base_url = base_url
+        self.api_key = api_key
+        self.capabilities = capabilities or VoiceCapabilities(
+            model_id=self.model_id,
+            native_provider="h3" if self.model_id.lower().startswith("h3") else "tts",
+            native_voice_supported=False,
+            tts_fallback_supported=True,
+            capability_verified=False,
+            probe_status="mock" if self.mode in {"mock", "fixture", "sandbox"} else "unverified",
+            probe_source="fixture" if self.mode in {"mock", "fixture", "sandbox"} else None,
+        )
+
+    def probe(self, real: bool = False, *, transport: httpx.AsyncBaseTransport | None = None) -> VoiceCapabilities | Any:
+        if not real:
+            return self.capabilities
+        return self._probe_real(transport=transport)
+
+    def probe_capabilities(self, real: bool = False, *, transport: httpx.AsyncBaseTransport | None = None) -> VoiceCapabilities | Any:
+        return self.probe(real=real, transport=transport)
+
+    async def _probe_real(self, *, transport: httpx.AsyncBaseTransport | None = None) -> VoiceCapabilities:
+        from dataclasses import replace
+
+        caps = self.capabilities
+        if not self.base_url:
+            result = replace(caps, capability_verified=False, probe_status="failed",
+                             probe_source="local", probe_error="base_url is not configured")
+            self.capabilities = result
+            return result
+        from app.config import get_settings
+        settings = get_settings()
+        path = str(getattr(settings, "atlas_capabilities_path", "/api/v1/model/capabilities") or "/api/v1/model/capabilities")
+        if not path.startswith("/"):
+            path = "/" + path
+        url = f"{self.base_url.rstrip('/')}{path}"
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    float(getattr(settings, "commercial_probe_timeout_sec", 20.0)),
+                    connect=float(getattr(settings, "commercial_probe_connect_timeout_sec", 10.0)),
+                ), transport=transport, headers=headers,
+            ) as client:
+                response = await client.get(url, params={"model": self.model_id})
+            if response.status_code >= 400:
+                raise RuntimeError(f"HTTP {response.status_code}: {response.text[:500]}")
+            payload = response.json()
+            if isinstance(payload.get("data"), dict):
+                payload = dict(payload["data"])
+            if isinstance(payload.get("capabilities"), dict):
+                payload = dict(payload["capabilities"])
+            if not isinstance(payload, dict):
+                raise ValueError("capability response must be an object")
+            response_model = str(payload.get("model") or payload.get("model_id") or self.model_id).strip()
+            explicit_verified = bool(payload.get("capability_verified") is True or payload.get("verified") is True)
+            if response_model and response_model != self.model_id:
+                explicit_verified = False
+            native = bool(payload.get("native_voice_supported", payload.get("voice_supported", False)))
+            result = replace(
+                caps,
+                native_provider="h3" if native or self.model_id.lower().startswith("h3") else caps.native_provider,
+                native_voice_supported=native,
+                tts_fallback_supported=bool(payload.get("tts_fallback_supported", True)),
+                capability_verified=explicit_verified,
+                probe_status="verified" if explicit_verified else "unverified",
+                probe_source="http-capabilities",
+                probe_error=None,
+            )
+        except Exception as exc:
+            result = replace(caps, capability_verified=False, probe_status="failed",
+                             probe_source="http-capabilities", probe_error=str(exc)[:500])
+        self.capabilities = result
+        return result
+
+
 def _script_text(script_json: Any) -> str:
     """Flatten dialogue lines while keeping the hash based on full JSON below."""
     if isinstance(script_json, dict):
@@ -205,9 +319,36 @@ def _rights_evidence_from_row(row: Any) -> RightsEvidence:
 class VoiceStrategy:
     """Persist an authorized, deterministic voice render."""
 
-    def __init__(self, db: AsyncSession, *, tts: MockTTSAdapter | None = None) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        tts: MockTTSAdapter | None = None,
+        voice_adapter: VoiceAdapter | None = None,
+    ) -> None:
         self.db = db
         self.tts = tts or MockTTSAdapter()
+        self.voice_adapter = voice_adapter or VoiceAdapter()
+
+    @property
+    def voice_capabilities(self) -> VoiceCapabilities:
+        return self.voice_adapter.capabilities
+
+    @property
+    def voice_capability_status(self) -> str:
+        return self.voice_capabilities.probe_status
+
+    def probe_capabilities(self, real: bool = False, *, transport: httpx.AsyncBaseTransport | None = None) -> VoiceCapabilities | Any:
+        return self.voice_adapter.probe(real=real, transport=transport)
+
+    @staticmethod
+    def voice_mode_for(capabilities: VoiceCapabilities) -> str:
+        """Select an explicitly named path without conflating native and TTS."""
+        if capabilities.native_voice_supported and capabilities.capability_verified:
+            return "h3_native"
+        if capabilities.tts_fallback_supported:
+            return "tts_fallback"
+        return "unavailable"
 
     async def render(
         self,

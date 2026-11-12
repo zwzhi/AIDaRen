@@ -6,7 +6,7 @@
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import httpx
@@ -73,6 +73,12 @@ class H3Capabilities:
     preview_default_resolution: str = "480p"
     max_reference_images: int = 9
     max_anchor_frames_per_segment: int = 3
+    # Probe metadata is deliberately separate from the draft capability values.
+    # A successful HTTP response without explicit verification evidence remains
+    # unverified and therefore cannot unlock paid generation.
+    probe_status: str = "unverified"
+    probe_source: str | None = None
+    probe_error: str | None = None
 
     @property
     def minimum_verified_resolution(self) -> str:
@@ -454,13 +460,15 @@ class H3VideoAdapter:
     def __init__(
         self,
         *,
-        capabilities: H3Capabilities = DRAFT_H3_CAPABILITIES,
+        capabilities: H3Capabilities | None = DRAFT_H3_CAPABILITIES,
         mode: str = "mock",
+        model_id: str = "",
         base_url: str = "",
         api_key: str = "",
     ) -> None:
-        self.capabilities = capabilities
+        self.capabilities = capabilities or DRAFT_H3_CAPABILITIES
         self.mode = str(mode or "mock").lower()
+        self.model_id = str(model_id or "")
         self.base_url = base_url
         self.api_key = api_key
         self._tasks_by_hash: dict[str, PreviewTask] = {}
@@ -485,11 +493,100 @@ class H3VideoAdapter:
                 preview_default_resolution=str(fixture.get("preview_default_resolution") or "480p"),
                 max_reference_images=int(fixture.get("max_reference_images") or 9),
                 max_anchor_frames_per_segment=int(fixture.get("max_anchor_frames_per_segment") or 3),
+                probe_status=str(fixture.get("probe_status") or "unverified"),
+                probe_source=str(fixture.get("probe_source")) if fixture.get("probe_source") else None,
+                probe_error=str(fixture.get("probe_error")) if fixture.get("probe_error") else None,
             ),
         )
 
-    def probe_capabilities(self) -> H3Capabilities:
-        return self.capabilities
+    def probe_capabilities(
+        self,
+        real: bool = False,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> H3Capabilities | Any:
+        """Return the local profile or an awaitable real capability probe.
+
+        The no-argument form is retained for Mock/Fixture callers.  Real mode
+        performs a GET against the provider capability/schema endpoint only.
+        It never calls a generation endpoint, and every failure falls back to
+        an explicitly unverified profile.
+        """
+        if not real:
+            return self.capabilities
+        return self._probe_capabilities_real(transport=transport)
+
+    def probe(self, real: bool = False, *, transport: httpx.AsyncBaseTransport | None = None) -> H3Capabilities | Any:
+        """Short alias used by provider orchestration code."""
+        return self.probe_capabilities(real=real, transport=transport)
+
+    async def _probe_capabilities_real(
+        self, *, transport: httpx.AsyncBaseTransport | None = None,
+    ) -> H3Capabilities:
+        caps = self.capabilities or DRAFT_H3_CAPABILITIES
+        model_id = self.model_id
+        if not self.base_url:
+            result = replace(caps, capability_verified=False, probe_status="failed",
+                             probe_source="local", probe_error="base_url is not configured")
+            self.capabilities = result
+            return result
+        from app.config import get_settings
+        settings = get_settings()
+        path = str(getattr(settings, "atlas_capabilities_path", "/api/v1/model/capabilities") or "/api/v1/model/capabilities")
+        if not path.startswith("/"):
+            path = "/" + path
+        url = f"{self.base_url.rstrip('/')}{path}"
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        try:
+            async with httpx.AsyncClient(
+                timeout=httpx.Timeout(
+                    float(getattr(settings, "commercial_probe_timeout_sec", 20.0)),
+                    connect=float(getattr(settings, "commercial_probe_connect_timeout_sec", 10.0)),
+                ), transport=transport, headers=headers,
+            ) as client:
+                response = await client.get(url, params={"model": model_id} if model_id else None)
+            if response.status_code >= 400:
+                raise ProviderRequestError(response.status_code, response.text[:500])
+            payload = response.json()
+            if isinstance(payload.get("data"), dict):
+                payload = dict(payload["data"])
+            if isinstance(payload.get("capabilities"), dict):
+                payload = dict(payload["capabilities"])
+            if not isinstance(payload, dict):
+                raise ValueError("capability response must be an object")
+            # An explicit provider assertion is required.  A generic 200/schema
+            # response is useful for diagnostics but does not prove the account
+            # can submit this model.
+            explicit_verified = bool(payload.get("capability_verified") is True or payload.get("verified") is True)
+            response_model = str(payload.get("model") or payload.get("model_id") or model_id).strip()
+            if model_id and response_model and response_model != model_id:
+                explicit_verified = False
+            def _int(name: str, current: int) -> int:
+                value = payload.get(name)
+                return int(value) if value is not None else current
+            def _set(name: str, current: frozenset[str]) -> frozenset[str]:
+                value = payload.get(name)
+                return frozenset(str(item) for item in value) if isinstance(value, (list, tuple, set, frozenset)) else current
+            result = replace(
+                caps,
+                duration_min_ms=_int("duration_min_ms", caps.duration_min_ms),
+                duration_max_ms=_int("duration_max_ms", caps.duration_max_ms),
+                duration_step_ms=_int("duration_step_ms", caps.duration_step_ms),
+                resolutions=_set("resolutions", caps.resolutions),
+                aspect_ratios=_set("aspect_ratios", caps.aspect_ratios),
+                audio_supported=bool(payload.get("audio_supported", caps.audio_supported)),
+                voice_reference_supported=bool(payload.get("voice_reference_supported", caps.voice_reference_supported)),
+                capability_verified=explicit_verified,
+                capability_version=str(payload.get("capability_version") or payload.get("version") or caps.capability_version),
+                probe_status="verified" if explicit_verified else "unverified",
+                probe_source="http-capabilities",
+                probe_error=None,
+            )
+        except Exception as exc:
+            result = replace(caps, capability_verified=False, probe_status="failed",
+                             probe_source="http-capabilities", probe_error=str(exc)[:500])
+        self.capabilities = result
+        return result
 
     def submit_preview(self, frozen_revision: dict[str, Any]) -> PreviewTask:
         revision = dict(frozen_revision)

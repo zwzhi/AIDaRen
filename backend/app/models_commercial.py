@@ -743,6 +743,11 @@ class CvExport(Base):
     voice_render_id: Mapped[int | None] = mapped_column(
         ForeignKey("cv_voice_renders.id"), nullable=True, index=True
     )
+    render_batch_id: Mapped[int | None] = mapped_column(
+        ForeignKey("cv_render_batches.id"), nullable=True, index=True
+    )
+    frozen_version_hash: Mapped[str] = mapped_column(String(64), default="")
+    segment_outputs_json: Mapped[list | None] = mapped_column(JSON, nullable=True)
     quality_check_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

@@ -98,6 +98,11 @@ class Settings(BaseSettings):
     # 已通过真实契约验证的模型 ID（逗号分隔）；未验证模型禁止付费提交
     commercial_verified_models: str = ""
     atlas_base_url: str = "https://api.atlascloud.ai"
+    # Read-only provider capability probes use bounded timeouts and a separate
+    # endpoint path. Probe failures must never be treated as paid readiness.
+    commercial_probe_timeout_sec: float = 20.0
+    commercial_probe_connect_timeout_sec: float = 10.0
+    atlas_capabilities_path: str = "/api/v1/model/capabilities"
     # 密钥只存后端（DB flat 加密），响应恒为空串
     atlas_api_key: str = ""
     gemini_analysis_model_id: str = ""
