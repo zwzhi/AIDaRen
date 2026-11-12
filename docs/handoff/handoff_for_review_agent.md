@@ -21,7 +21,7 @@
 **需求基线**：`docs/handoff/baseline_audit.md` 引用的《PRINTFILM_Web_ZCode_开发任务书_V1.0.md》（可在 `C:\Users\白名单\Downloads\PRINTFILM_Web_ZCode_开发任务书_V1.0.md` 找到，或以 docs/handoff/ 各阶段报告中的摘要为准）。
 
 **关键约束**：
-- 不换底座、不换模型（Gemini 3 Flash Preview + MiniMax H3 Developer Reference）、不换技术栈
+- 不换底座、不换技术栈。视频解析和脚本优先使用 Gemini 4 Argon Developer，Gemini 4 Argon 作为高成本复核模型，视频生成使用 MiniMax H3 Developer Reference。
 - 真实付费 API **始终关闭**（`commercial_paid_execution_enabled=false`），当前全部走本地 Mock
 - 模拟与真实费用严格隔离（预算池 `scope=mock/real`）
 - 原参考视频及关键帧 **绝不进入** H3 生成请求（INV-01）

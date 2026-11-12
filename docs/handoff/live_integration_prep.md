@@ -5,7 +5,7 @@
 
 ## 1. 两个选定模型的精确 Model ID 与参数依据
 
-### ① Gemini 3 Flash Preview（视频解析）
+### ① Gemini 4 Argon Developer（视频解析）
 - **协议**：原生 `POST /v1beta/models/{model_id}:generateContent`（Bearer 鉴权；inline_data 携带视频字节 + `response_mime_type: application/json` 结构化输出）——适配器已按此实现，Fixture 测试通过
 - **精确 model_id**：❗账号内核实（控制台模型列表复制原串）。Atlas 模型 ID 存在 `命名空间/名称/能力` 形态（官方图像示例为 `google/nano-banana-2/text-to-image`），Gemini 形态待账号确认，**不猜造**
 - **参数依据（公开）**：视频/音轨多模态输入、结构化输出、思考预算可配；Token 用量随响应返回（联调时记录实测）

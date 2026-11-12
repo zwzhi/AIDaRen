@@ -94,7 +94,7 @@ async def create_product_research(
                 source_url=body.source_urls[0],
                 api_key=settings.atlas_api_key,
                 base_url=settings.atlas_base_url,
-                model_id=settings.gemini_analysis_model_id or "google/gemini-3-flash-preview",
+                model_id=settings.gemini_analysis_model_id or "google/gemini-4-argon-developer",
             )
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"商品研究失败：{exc}") from exc

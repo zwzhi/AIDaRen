@@ -52,7 +52,7 @@ async def research_product_with_gemini(
     image_urls: list[str] | tuple[str, ...] = (),
     api_key: str,
     base_url: str = "https://api.atlascloud.ai",
-    model_id: str = "google/gemini-3-flash-preview",
+    model_id: str = "google/gemini-4-argon-developer",
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> GeminiProductResearchResult:
     content: list[dict[str, Any]] = [{
