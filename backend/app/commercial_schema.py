@@ -11,32 +11,6 @@ from sqlalchemy import text
 
 async def apply_commercial_schema_patches(conn) -> None:
     """幂等补齐商业域结构；只允许 additive DDL。"""
-    # V2 asset tables are additive.  They are kept in a separate module so
-    # the legacy product/actor tables remain backwards compatible while an
-    # existing PostgreSQL installation receives the same tables as a fresh
-    # create_all database.
-    from app import models_commercial_v2
-    from app.database import Base
-
-    v2_tables = [
-        models_commercial_v2.CvProductVariant.__table__,
-        models_commercial_v2.CvProductResearchRun.__table__,
-        models_commercial_v2.CvProductSource.__table__,
-        models_commercial_v2.CvProductFactCandidate.__table__,
-        models_commercial_v2.CvProductState.__table__,
-        models_commercial_v2.CvProductStateAsset.__table__,
-        models_commercial_v2.CvProductCapability.__table__,
-        models_commercial_v2.CvWardrobeItem.__table__,
-        models_commercial_v2.CvWardrobeVersion.__table__,
-        models_commercial_v2.CvWardrobeSet.__table__,
-        models_commercial_v2.CvActorWardrobeLook.__table__,
-        models_commercial_v2.CvActorReferenceSet.__table__,
-        models_commercial_v2.CvActorReferenceFrame.__table__,
-        models_commercial_v2.CvVoiceSource.__table__,
-        models_commercial_v2.CvWorkflowRun.__table__,
-        models_commercial_v2.CvWorkflowStageRun.__table__,
-    ]
-    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=v2_tables, checkfirst=True))
     await conn.execute(text(
         """CREATE TABLE IF NOT EXISTS cv_replication_projects (
             id INTEGER PRIMARY KEY,
@@ -373,3 +347,28 @@ async def apply_commercial_schema_patches(conn) -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS uq_cv_ledger_attempt_event "
             "ON cv_usage_ledger (attempt_ref, event_key)"
         ))
+
+    # V2 asset tables are additive.  Create them after the legacy commercial
+    # tables above because several V2 foreign keys point at those tables.
+    from app import models_commercial_v2
+    from app.database import Base
+
+    v2_tables = [
+        models_commercial_v2.CvProductVariant.__table__,
+        models_commercial_v2.CvProductResearchRun.__table__,
+        models_commercial_v2.CvProductSource.__table__,
+        models_commercial_v2.CvProductFactCandidate.__table__,
+        models_commercial_v2.CvProductState.__table__,
+        models_commercial_v2.CvProductStateAsset.__table__,
+        models_commercial_v2.CvProductCapability.__table__,
+        models_commercial_v2.CvWardrobeItem.__table__,
+        models_commercial_v2.CvWardrobeVersion.__table__,
+        models_commercial_v2.CvWardrobeSet.__table__,
+        models_commercial_v2.CvActorWardrobeLook.__table__,
+        models_commercial_v2.CvActorReferenceSet.__table__,
+        models_commercial_v2.CvActorReferenceFrame.__table__,
+        models_commercial_v2.CvVoiceSource.__table__,
+        models_commercial_v2.CvWorkflowRun.__table__,
+        models_commercial_v2.CvWorkflowStageRun.__table__,
+    ]
+    await conn.run_sync(lambda sync_conn: Base.metadata.create_all(sync_conn, tables=v2_tables, checkfirst=True))
