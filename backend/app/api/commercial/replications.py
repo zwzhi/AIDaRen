@@ -49,6 +49,25 @@ from app.services.commercial.generation import apply_render_segment_result
 router = APIRouter()
 
 
+def _ensure_batch_revision_alignment(
+    batch: CvRenderBatch,
+    *,
+    script: CvScriptVersion | None,
+    anchors: CvAnchorSet | None,
+    voice: CvVoiceRender | None,
+    subtitle: CvSubtitleVersion | None,
+) -> None:
+    expected = {
+        "script_version_id": script.id if script else None,
+        "anchor_set_id": anchors.id if anchors else None,
+        "voice_render_id": voice.id if voice else None,
+        "subtitle_version_id": subtitle.id if subtitle else None,
+    }
+    for field, value in expected.items():
+        if getattr(batch, field) != value:
+            raise HTTPException(status_code=409, detail="render batch 引用的冻结版本已过期")
+
+
 class ReplicationCreateBody(BaseModel):
     production_id: int = Field(gt=0)
     mode: str = Field(default="structural_rewrite", pattern="^(structural_rewrite|high_fidelity)$")
@@ -584,6 +603,7 @@ async def create_preview(
         )
     except RenderBatchInputError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _ensure_batch_revision_alignment(batch, script=script, anchors=anchors, voice=voice, subtitle=subtitle)
     project.status = "preview_ready"
     project.expected_version += 1
     await db.commit()
@@ -670,6 +690,7 @@ async def _load_ready_render_context(
         )
     except RenderBatchInputError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    _ensure_batch_revision_alignment(batch, script=script, anchors=anchors, voice=voice, subtitle=subtitle)
     segments = list((await db.execute(select(CvRenderSegment).where(
         CvRenderSegment.render_batch_id == batch.id
     ).order_by(CvRenderSegment.segment_index))).scalars().all())
