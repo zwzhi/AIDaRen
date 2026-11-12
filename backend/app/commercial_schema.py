@@ -350,6 +350,7 @@ async def apply_commercial_schema_patches(conn) -> None:
 
     # V2 asset tables are additive.  Create them after the legacy commercial
     # tables above because several V2 foreign keys point at those tables.
+    from app import models_commercial  # noqa: F401  # register legacy FK tables for direct patch calls
     from app import models_commercial_v2
     from app.database import Base
 
