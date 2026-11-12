@@ -12,6 +12,7 @@ import {
   type ShotGraph,
   type VoiceRender,
 } from './replicationApi'
+import { commercialApi, type WardrobeItem } from './api'
 import './commercial.css'
 
 type LocalState = ReturnType<typeof createReplicationFixture>
@@ -46,6 +47,8 @@ export default function CommercialReplicationPage() {
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState('')
   const [fixture, setFixture] = useState<LocalState | null>(null)
+  const [wardrobes, setWardrobes] = useState<WardrobeItem[]>([])
+  const [wardrobeAssignments, setWardrobeAssignments] = useState<Record<string, number>>({})
 
   const routeReason = project?.route_reason || '跨商品复刻默认保留结构并重写台词。'
   const risks = project?.risks || ['需要确认参考视频改编权、达人肖像权和声音授权']
@@ -59,6 +62,7 @@ export default function CommercialReplicationPage() {
     replicationApi.get(productionId).then(value => { if (alive) setProject(value) }).catch(() => undefined)
     return () => { alive = false }
   }, [productionId])
+  useEffect(() => { commercialApi.listWardrobes().then(r => setWardrobes(r.items)).catch(() => setWardrobes([])) }, [])
 
   const create = async () => {
     if (!productionId) { setMsg('请先从现有作品进入，或填写 production_id'); return }
@@ -171,7 +175,7 @@ export default function CommercialReplicationPage() {
       {project && <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
         <h3 style={{ margin: '0 0 12px', fontSize: 16 }}>② 分析 → Shot Graph</h3>
         <Button variant="outline" size="sm" disabled={busy !== ''} onClick={analyze}>{busy === 'analyze' ? '分析中…' : '开始分析'}</Button>
-        {graph && <div style={{ marginTop: 12 }}>{graph.shots.map(shot => <div className="cv-shot" key={shot.shot_key} style={{ padding: 10, marginTop: 8 }}><strong>{shot.shot_key} · {shot.purpose}</strong><span className="pf-muted" style={{ marginLeft: 8, fontSize: 12 }}>{(shot.start_ms / 1000).toFixed(1)}s–{(shot.end_ms / 1000).toFixed(1)}s · 商品 {shot.product_presence} · 置信度 {Math.round(shot.product_confidence * 100)}%</span><div style={{ fontSize: 13, marginTop: 4 }}>{shot.action}</div></div>)}<div className="cv-card-actions"><Button variant="outline" size="sm" disabled={graph.confirmed || busy !== ''} onClick={confirmGraph}>确认 Shot Graph</Button><Button variant="lime" size="sm" disabled={!graph.confirmed || busy !== ''} onClick={generateScript}>生成脚本</Button></div></div>}
+        {graph && <div style={{ marginTop: 12 }}>{graph.shots.map(shot => <div className="cv-shot" key={shot.shot_key} style={{ padding: 10, marginTop: 8 }}><strong>{shot.shot_key} · {shot.purpose}</strong><span className="pf-muted" style={{ marginLeft: 8, fontSize: 12 }}>{(shot.start_ms / 1000).toFixed(1)}s–{(shot.end_ms / 1000).toFixed(1)}s · 商品 {shot.product_presence} · 置信度 {Math.round(shot.product_confidence * 100)}%</span><div style={{ fontSize: 13, marginTop: 4 }}>{shot.action}</div><label className="cv-field" style={{ margin: '8px 0 0', maxWidth: 280 }}><span>本镜服饰</span><select className="cv-input" value={wardrobeAssignments[shot.shot_key] || ''} onChange={e => setWardrobeAssignments(prev => ({ ...prev, [shot.shot_key]: Number(e.target.value) }))}><option value="">保持源视频服饰</option>{wardrobes.flatMap(item => item.versions.map(version => <option key={version.id} value={version.id}>{item.name} V{version.version}</option>))}</select></label></div>)}<div className="cv-card-actions"><Button variant="outline" size="sm" disabled={graph.confirmed || busy !== ''} onClick={confirmGraph}>确认 Shot Graph</Button><Button variant="lime" size="sm" disabled={!graph.confirmed || busy !== ''} onClick={generateScript}>生成脚本</Button></div></div>}
       </div>}
 
       {project && <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
