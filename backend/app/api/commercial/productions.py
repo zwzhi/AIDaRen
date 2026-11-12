@@ -666,6 +666,26 @@ async def plan_production(
             "capabilities": plan["capabilities"]}
 
 
+def _compile_unit_prompt(production, unit) -> str:
+    """用统一组装器从模板结构+我方素材生成完整镜头提示词。"""
+    from app.services.commercial.prompt_compiler import compile_shot_prompt
+    plan = production.plan_json or {}
+    shots = plan.get("shots") or []
+    covered = set(unit.get("covered_shot_keys") or [])
+    shot = next((s for s in shots if s.get("shot_key") in covered), {})
+    return compile_shot_prompt(
+        shot_observation=str(shot.get("observation") or ""),
+        shot_inference=str(shot.get("inference") or ""),
+        shot_action_template=str(shot.get("action") or ""),
+        actor_description=str(plan.get("actor_description") or ""),
+        product_name=str(plan.get("product_name") or ""),
+        product_state=str(shot.get("product_state") or ""),
+        approved_dialogue=str(shot.get("dialogue") or ""),
+        duration_seconds=unit.get("request_duration_ms", 0) / 1000,
+        aspect_ratio=production.aspect_ratio,
+    )
+
+
 def _build_unit_params(production: CvProduction, unit: dict[str, Any], user_id: int,
                        dialogue_override: str = "") -> dict:
     """从已确认计划构造该单元的完整生成参数（报价与生成同源）。
@@ -683,7 +703,7 @@ def _build_unit_params(production: CvProduction, unit: dict[str, Any], user_id: 
         "actor_image_asset_ids": [],  # 由 production 的达人版本填充（见下）
         "product_image_asset_ids": [],
         "voice_reference_asset_ids": [],
-        "prompt": "按模板镜头描述生成：" + "；".join(unit.get("covered_shot_keys") or []),
+        "prompt": _compile_unit_prompt(production, unit),
         "approved_dialogue": (dialogue_override or "").strip() or planned_dialogue,
         "resolution_id": production.resolution_id,
         "duration_ms": int(unit.get("request_duration_ms") or 0),
