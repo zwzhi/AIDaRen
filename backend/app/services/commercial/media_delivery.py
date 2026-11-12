@@ -54,6 +54,7 @@ async def get_or_upload_handle(
 
     raw = _asset_bytes(asset)
     sha = hashlib.sha256(raw).hexdigest()
+    upstream_url = ""
     if mock:
         handle = f"MOCK-media-{asset.id}-{sha[:8]}"
         expires = datetime.now(UTC) + _MOCK_HANDLE_TTL
@@ -62,6 +63,7 @@ async def get_or_upload_handle(
             raw, asset.mime, base_url=base_url, api_key=api_key, transport=transport,
         )
         handle = result["handle"]
+        upstream_url = str(result.get("url") or "")
         raw_expires = result.get("expires_at")
         expires = None
         if raw_expires:
@@ -71,7 +73,7 @@ async def get_or_upload_handle(
                 expires = None
     fresh = CvProviderMediaHandle(
         asset_id=asset.id, provider="atlas", handle=handle,
-        upstream_url="", expires_at=expires, source_sha256=sha,
+        upstream_url=upstream_url, expires_at=expires, source_sha256=sha,
     )
     db.add(fresh)
     await db.flush()
@@ -100,7 +102,9 @@ async def ensure_generation_handles(
         handle = await get_or_upload_handle(
             db, asset, base_url=base_url, api_key=api_key, transport=transport, mock=mock,
         )
-        out[int(asset_id)] = handle.handle
+        # Atlas H3 expects a public temporary URL in `refers`; Mock keeps the
+        # deterministic handle so fixture behavior remains unchanged.
+        out[int(asset_id)] = handle.upstream_url or handle.handle
     return out
 
 

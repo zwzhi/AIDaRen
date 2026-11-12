@@ -115,13 +115,17 @@ async def upload_media(
         if resp.status_code >= 400:
             raise UploadFailedError(f"HTTP {resp.status_code}: {resp.text[:300]}")
         payload = resp.json()
-        handle = str(payload.get("id") or payload.get("handle") or "").strip()
-        if not handle:
-            raise UploadFailedError("上传响应缺少素材句柄（uploadMedia 契约待联调核实）")
+        data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+        upstream_url = str(
+            data.get("download_url") or data.get("url") or data.get("public_url") or ""
+        ).strip()
+        handle = str(data.get("id") or data.get("handle") or data.get("filename") or upstream_url).strip()
+        if not handle and not upstream_url:
+            raise UploadFailedError("上传响应缺少素材句柄或下载地址")
         return {
             "handle": handle,
-            "url": str(payload.get("url") or ""),
-            "expires_at": payload.get("expires_at"),
+            "url": upstream_url,
+            "expires_at": data.get("expires_at"),
         }
 
 

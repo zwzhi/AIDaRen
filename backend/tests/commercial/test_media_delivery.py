@@ -53,6 +53,24 @@ async def test_upload_success_records_handle(db_session, owner) -> None:
 
 
 @pytest.mark.asyncio
+async def test_nested_atlas_upload_response_persists_download_url(db_session, owner) -> None:
+    asset = await _asset(db_session, owner)
+
+    def handler(request):
+        return httpx.Response(200, json={"code": 200, "data": {
+            "download_url": "https://cdn.example.test/atlas-upload.jpg",
+            "filename": "atlas-upload.jpg",
+        }})
+
+    handle = await media_delivery.get_or_upload_handle(
+        db_session, asset, base_url="https://api.atlascloud.ai", api_key="k",
+        transport=httpx.MockTransport(handler),
+    )
+    assert handle.handle == "atlas-upload.jpg"
+    assert handle.upstream_url == "https://cdn.example.test/atlas-upload.jpg"
+
+
+@pytest.mark.asyncio
 async def test_upload_failure_raises(db_session, owner) -> None:
     asset = await _asset(db_session, owner)
 
