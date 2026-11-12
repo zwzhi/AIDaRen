@@ -237,20 +237,28 @@ async def analyze_source(
             resolve_provider_for_commercial_task(require_verified=True)
         except (ProviderNotConfigured, CapabilityUnverified) as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-        from app.services.providers.atlas.gemini import GeminiAnalysisRequest, analyze_video
+        from app.services.providers.atlas.gemini import GeminiAnalysisRequest, analyze_video, analyze_video_native
+        from app.services.providers.atlas.media import upload_media
         from app.services.commercial.storage import asset_disk_path as _adp
 
         asset = await db.get(CvMediaAsset, source.media_asset_id)
 
         async def analyzer(_request):
+            raw_video = _adp(asset.object_key).read_bytes()
+            uploaded = await upload_media(
+                raw_video,
+                asset.mime,
+                base_url=settings.atlas_base_url,
+                api_key=settings.atlas_api_key,
+            )
             request = GeminiAnalysisRequest(
                 source_id=source.id, model_id=model_id,
-                video_bytes=_adp(asset.object_key).read_bytes(), video_mime=asset.mime,
+                video_bytes=raw_video, video_mime=asset.mime,
                 source_duration_ms=source.duration_ms or 0,
+                video_url=uploaded.get("url") or None,
             )
-            result = await analyze_video(
-                request, base_url=settings.atlas_base_url, api_key=settings.atlas_api_key,
-            )
+            analyze = analyze_video_native if model_id.startswith("google/gemini-4-argon") else analyze_video
+            result = await analyze(request, base_url=settings.atlas_base_url, api_key=settings.atlas_api_key)
             return {
                 "duration_ms": result.duration_ms,
                 "shots": [

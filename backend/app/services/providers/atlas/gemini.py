@@ -46,6 +46,27 @@ class GeminiAnalysisRequest:
     video_bytes: bytes
     video_mime: str
     source_duration_ms: int  # 后端 ffprobe 结果；模型输出不得重写
+    video_url: str | None = None
+
+
+def build_native_video_body(request: GeminiAnalysisRequest) -> dict[str, Any]:
+    """Build Gemini 4 Argon native request with a public video file URI."""
+    if not request.video_url:
+        raise ValueError("Gemini native video analysis requires video_url")
+    return {
+        "contents": [{
+            "role": "user",
+            "parts": [
+                {"file_data": {"mime_type": request.video_mime, "file_uri": request.video_url}},
+                {"text": f"原片后端探测时长 {request.source_duration_ms}ms。请输出结构化分镜记录 JSON。"},
+            ],
+        }],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "temperature": 0.1,
+            "maxOutputTokens": 32768,
+        },
+    }
 
 
 def build_generate_content_body(request: GeminiAnalysisRequest) -> dict[str, Any]:
@@ -139,6 +160,26 @@ async def analyze_video(
         if resp.status_code >= 400:
             raise ProviderRequestError(resp.status_code, resp.text[:500])
         return parse_analysis_response(resp.json(), request)
+
+
+async def analyze_video_native(
+    request: GeminiAnalysisRequest,
+    *,
+    base_url: str,
+    api_key: str,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> AnalysisResult:
+    """Analyze video through Gemini 4 Argon native multimodal endpoint."""
+    url = f"{base_url.rstrip('/')}/v1/models/{request.model_id}:generateContent"
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(180.0, connect=15.0),
+        transport=transport,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+    ) as client:
+        response = await client.post(url, json=build_native_video_body(request))
+    if response.status_code >= 400:
+        raise ProviderRequestError(response.status_code, response.text[:500])
+    return parse_analysis_response(response.json(), request)
 
 # ---------------------------------------------------------------------------
 # Fixture-first structured adapter for replication workflows
