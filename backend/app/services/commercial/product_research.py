@@ -182,6 +182,10 @@ async def merge_product_candidates(
     ))).scalars().all()
     decision_map = {int(item.get("candidate_id")): str(item.get("status") or "approved") for item in decisions}
     approved: dict[str, Any] = {}
+    approved_claims: list[dict[str, Any]] = []
+    approved_actions: list[str] = []
+    approved_states: list[dict[str, Any]] = []
+    approved_capabilities: list[dict[str, Any]] = []
     for row in rows:
         status = decision_map.get(row.id, "candidate")
         if status not in {"approved", "confirmed"}:
@@ -190,6 +194,14 @@ async def merge_product_candidates(
         row.reviewed_by = user_id
         row.reviewed_at = datetime.now(UTC)
         approved[row.field_name] = row.value_json
+        if row.field_name.startswith("claim:") and isinstance(row.value_json, dict):
+            approved_claims.append({**row.value_json, "approved": False, "source": "gemini_research"})
+        elif row.field_name.startswith("state:") and isinstance(row.value_json, dict):
+            approved_states.append(row.value_json)
+        elif row.field_name.startswith("capability:") and isinstance(row.value_json, dict):
+            approved_capabilities.append(row.value_json)
+            if row.value_json.get("capability_key"):
+                approved_actions.append(str(row.value_json["capability_key"]))
 
     latest = (await db.execute(select(CvProductVersion).where(
         CvProductVersion.product_id == product.id,
@@ -201,12 +213,38 @@ async def merge_product_candidates(
         form=str(approved.get("form") or (latest.form if latest else "")),
         specs_text=str(approved.get("description") or (latest.specs_text if latest else "")),
         image_asset_ids=approved.get("image_asset_ids") or (latest.image_asset_ids if latest else []),
-        claims=approved.get("claims") or (latest.claims if latest else []),
+        claims=approved_claims or approved.get("claims") or (latest.claims if latest else []),
         forbidden_phrases=latest.forbidden_phrases if latest else [],
-        allowed_actions=approved.get("allowed_actions") or (latest.allowed_actions if latest else []),
+        allowed_actions=approved_actions or approved.get("allowed_actions") or (latest.allowed_actions if latest else []),
         published_by=user_id,
     )
     db.add(version)
+    await db.flush()
+    from app.models_commercial_v2 import CvProductCapability, CvProductState
+    for state in approved_states:
+        state_key = str(state.get("state_key") or "").strip()
+        if not state_key:
+            continue
+        state_row = CvProductState(
+            product_version_id=version.id,
+            state_key=state_key,
+            label=str(state.get("label") or ""),
+            action_json={"evidence": state.get("evidence"), "confidence": state.get("confidence")},
+            status="candidate",
+            confidence=state.get("confidence"),
+        )
+        db.add(state_row)
+    for capability in approved_capabilities:
+        key = str(capability.get("capability_key") or "").strip()
+        if not key:
+            continue
+        db.add(CvProductCapability(
+            product_version_id=version.id,
+            capability_key=key,
+            description=str(capability.get("description") or ""),
+            preconditions_json={"evidence": capability.get("evidence"), "confidence": capability.get("confidence")},
+            status="candidate",
+        ))
     product.current_version = version_no
     run.status = "published"
     run.completed_at = datetime.now(UTC)
