@@ -32,6 +32,14 @@ export type ProductItem = {
   claims?: { claim_id: string; text: string; approved?: boolean }[]
   forbidden_phrases?: string[]; allowed_actions?: string[]
 }
+export type ProductResearch = {
+  id: number; product_id: number; status: string; input_hash: string
+  candidates: { id: number; field_name: string; value: unknown; confidence?: number | null; status: string }[]
+}
+export type WardrobeItem = {
+  id: number; name: string; category: string; scope: string; status: string
+  versions: { id: number; version: number; asset_ids: number[]; color: string; material: string; description: string; status: string }[]
+}
 export type Unit = {
   unit_key: string; request_duration_ms: number
   covered_shot_keys: string[]; adopt_ranges: [string, number, number][]; notes?: string[]
@@ -100,6 +108,16 @@ export const commercialApi = {
     method: 'POST', body: JSON.stringify(payload),
   }),
   listProducts: () => request<{ items: ProductItem[] }>('/api/commercial/products'),
+  researchProduct: (productId: number, payload: { image_asset_ids?: number[]; name?: string; description?: string; source_urls?: string[]; real_gemini?: boolean }) =>
+    request<ProductResearch>(`/api/commercial/products/${productId}/research`, { method: 'POST', body: JSON.stringify(payload) }),
+  getProductResearch: (runId: number) => request<ProductResearch>(`/api/commercial/product-research/${runId}`),
+  reviewProductResearch: (runId: number, decisions: { candidate_id: number; status: string }[]) =>
+    request<{ product_version_id: number; version: number; status: string }>(`/api/commercial/product-research/${runId}/review`, { method: 'POST', body: JSON.stringify({ decisions }) }),
+  listWardrobes: () => request<{ items: WardrobeItem[] }>('/api/commercial/wardrobes'),
+  createWardrobe: (payload: { name: string; category: string; scope: string }) =>
+    request<{ id: number }>('/api/commercial/wardrobes', { method: 'POST', body: JSON.stringify(payload) }),
+  createWardrobeVersion: (wardrobeId: number, payload: { asset_ids: number[]; color?: string; material?: string; description?: string }) =>
+    request<{ wardrobe_version_id: number }>(`/api/commercial/wardrobes/${wardrobeId}/versions`, { method: 'POST', body: JSON.stringify(payload) }),
   createProduction: (payload: Record<string, unknown>) =>
     request<{ production_id: number }>('/api/commercial/productions', { method: 'POST', body: JSON.stringify(payload) }),
   adapt: (productionId: number, marketingGoal: string) =>

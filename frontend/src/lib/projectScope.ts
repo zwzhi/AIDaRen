@@ -12,6 +12,7 @@ export const COMMERCIAL_NAV = [
   { key: 'cv-templates', path: '/commercial/templates', label: '商业模板库' },
   { key: 'cv-actors', path: '/commercial/actors', label: '达人库' },
   { key: 'cv-products', path: '/commercial/products', label: '商品库' },
+  { key: 'cv-wardrobes', path: '/commercial/wardrobes', label: '服饰库' },
   { key: 'cv-studio', path: '/commercial/studio', label: '制作工作台' },
   { key: 'cv-tasks', path: '/commercial/tasks', label: '任务与作品' },
   { key: 'cv-settings', path: '/commercial/settings', label: '设置与费用' },
