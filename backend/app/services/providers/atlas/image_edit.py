@@ -58,6 +58,74 @@ class ImageEditResult:
     h3_eligible: bool = False
 
 
+@dataclass(frozen=True)
+class ImageProviderTaskResult:
+    status: str
+    prediction_id: str
+    output_urls: tuple[str, ...] = ()
+    cost_amount: str | None = None
+    cost_currency: str | None = None
+    raw: dict[str, Any] | None = None
+
+
+async def generate_image_edit_real(
+    *,
+    images: list[str] | tuple[str, ...],
+    prompt: str,
+    model_id: str = "openai/gpt-image-2.6-flare/edit",
+    base_url: str = "https://api.atlascloud.ai",
+    api_key: str,
+    quality: str = "low",
+    complexity: str = "low",
+    size: str = "720x1280",
+    output_format: str = "jpeg",
+    n: int = 1,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> ImageProviderTaskResult:
+    """Submit one real Atlas image edit using the verified `images` contract."""
+    refs = [str(item).strip() for item in images if str(item).strip()]
+    if not refs or len(refs) > 16:
+        raise ImageEditInputError("IMAGE_REFERENCES_INVALID", "Image2.6 需要 1～16 张参考图")
+    if n < 1:
+        raise ImageEditInputError("IMAGE_COUNT_INVALID", "n 必须为正数")
+    body = {
+        "model": model_id,
+        "images": refs,
+        "prompt": str(prompt or ""),
+        "quality": quality,
+        "complexity": complexity,
+        "size": size,
+        "output_format": output_format,
+        "n": n,
+    }
+    url = f"{base_url.rstrip('/')}/api/v1/model/generateImage"
+    async with httpx.AsyncClient(
+        timeout=httpx.Timeout(120.0, connect=15.0),
+        transport=transport,
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+    ) as client:
+        response = await client.post(url, json=body)
+    if response.status_code >= 400:
+        raise ImageEditCapabilityError("IMAGE_PROVIDER_ERROR", f"HTTP {response.status_code}: {response.text[:500]}")
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) and isinstance(payload.get("data"), dict) else payload
+    if not isinstance(data, dict):
+        raise ImageEditCapabilityError("IMAGE_PROVIDER_RESPONSE_INVALID", "Image2.6 返回体不是对象")
+    if data.get("error"):
+        raise ImageEditCapabilityError("IMAGE_PROVIDER_ERROR", str(data.get("error"))[:500])
+    outputs = data.get("outputs") or data.get("output") or []
+    if isinstance(outputs, str):
+        outputs = [outputs]
+    return ImageProviderTaskResult(
+        status=str(data.get("status") or ("completed" if outputs else "processing")),
+        prediction_id=str(data.get("id") or ""),
+        output_urls=tuple(str(item) for item in outputs if str(item).startswith("https://")),
+        cost_amount=str(data.get("cost") or data.get("usage_cost") or "") or None,
+        cost_currency=str(data.get("currency") or "USD"),
+        raw=data,
+    )
+
+
 class ImageEditAdapter:
     def __init__(
         self,
@@ -98,17 +166,18 @@ class ImageEditAdapter:
 
     async def _probe_real(self, *, transport: httpx.AsyncBaseTransport | None = None) -> ImageEditCapabilities:
         caps = self.capabilities
-        if not self.base_url:
+        from app.config import get_settings
+        settings = get_settings()
+        base_url = self.base_url or str(getattr(settings, "atlas_base_url", "") or "")
+        if not base_url:
             result = replace(caps, capability_verified=False, probe_status="failed",
                              probe_source="local", probe_error="base_url is not configured")
             self.capabilities = result
             return result
-        from app.config import get_settings
-        settings = get_settings()
         path = str(getattr(settings, "atlas_capabilities_path", "/api/v1/model/capabilities") or "/api/v1/model/capabilities")
         if not path.startswith("/"):
             path = "/" + path
-        url = f"{self.base_url.rstrip('/')}{path}"
+        url = f"{base_url.rstrip('/')}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
             async with httpx.AsyncClient(
