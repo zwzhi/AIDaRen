@@ -30,7 +30,17 @@ class WardrobeVersionBody(BaseModel):
 @router.get("/wardrobes")
 async def list_wardrobes(db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     rows = (await db.execute(select(CvWardrobeItem).order_by(CvWardrobeItem.id.desc()))).scalars().all()
-    items = [row for row in rows if row.created_by == user.id or user.role == "admin" or (row.scope == "team" and row.team_id)]
+    # 权限：个人=所有者；团队=用户必须是该团队成员；管理员=全站
+    from app.models_teams import TeamMember
+    from sqlalchemy import select as _sel
+    my_team_ids = set((await db.execute(
+        _sel(TeamMember.team_id).where(TeamMember.user_id == user.id, TeamMember.active.is_(True))
+    )).scalars().all())
+    items = [row for row in rows if (
+        row.created_by == user.id
+        or user.role == "admin"
+        or (row.scope == "team" and row.team_id in my_team_ids)
+    )]
     out = []
     for item in items:
         versions = (await db.execute(select(CvWardrobeVersion).where(CvWardrobeVersion.item_id == item.id).order_by(CvWardrobeVersion.version.desc()))).scalars().all()
@@ -40,6 +50,23 @@ async def list_wardrobes(db: AsyncSession = Depends(get_db), user: User = Depend
 
 @router.post("/wardrobes")
 async def create_wardrobe(body: WardrobeCreateBody, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    # 服务端验证团队归属：scope=team 时 team_id 必须是用户所属团队
+    if body.scope == "team":
+        if body.team_id is None:
+            from fastapi import HTTPException
+            raise HTTPException(status_code=422, detail="团队共享必须指定 team_id")
+        from app.models_teams import TeamMember
+        from sqlalchemy import select as _sel
+        member = (await db.execute(
+            _sel(TeamMember.id).where(
+                TeamMember.team_id == body.team_id,
+                TeamMember.user_id == user.id,
+                TeamMember.active.is_(True),
+            )
+        )).scalar_one_or_none()
+        if member is None and user.role != "admin":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=403, detail="无权向该团队添加共享服饰")
     if body.scope not in {"personal", "team", "project"}:
         raise HTTPException(status_code=422, detail="服饰共享范围无效")
     item = CvWardrobeItem(name=body.name, category=body.category, scope=body.scope, team_id=body.team_id, created_by=user.id)
