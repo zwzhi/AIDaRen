@@ -1334,8 +1334,9 @@ async def get_product_detail(
     db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
 ):
     """商品完整详情：基本信息、图片、状态图册、研究候选和已确认卖点。"""
-    from app.models_commercial import CvProduct, CvProductVersion, CvProductState, CvProductStateAsset
-    from app.models_commercial import CvProductFactCandidate, CvProductResearchRun, CvProductResearchUsage
+    from app.models_commercial import CvProduct, CvProductVersion
+    from app.models_commercial_v2 import (CvProductState, CvProductStateAsset,
+        CvProductFactCandidate, CvProductResearchRun, CvProductResearchUsage)
 
     product = await db.get(CvProduct, product_id)
     if product is None:
