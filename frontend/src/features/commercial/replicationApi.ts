@@ -34,6 +34,7 @@ export type ShotGraphShot = {
   product_confidence: number
   product_evidence: string
   action: string
+  wardrobe_version_id?: number | null
 }
 
 export type ShotGraph = { id: number; replication_id: number; shots: ShotGraphShot[]; confirmed: boolean }
@@ -58,6 +59,8 @@ function normalizeShotGraph(raw: any): ShotGraph {
       ...shot,
       start_ms: Number(shot.start_ms ?? shot.start ?? 0),
       end_ms: Number(shot.end_ms ?? shot.end ?? 0),
+      // 从 action_json 提取已保存的服饰选择（刷新后回显）
+      wardrobe_version_id: shot.wardrobe_version_id ?? shot.action_json?.wardrobe_version_id ?? shot.action?.wardrobe_version_id ?? null,
     })),
   }
 }

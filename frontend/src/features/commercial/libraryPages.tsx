@@ -31,15 +31,35 @@ export function CommercialActorsPage() {
   }, [])
   useEffect(refresh, [refresh])
 
+  const [lastActorId, setLastActorId] = useState<number | null>(null)
   const create = async () => {
     if (!pending.images?.length) { setMsg('请先上传达人形象图'); return }
     try {
       const r = await commercialApi.createActor(name || '未命名达人', pending.images, '页面创建')
+      setLastActorId(r.actor_id)
       if (pending.voice != null) {
-        await commercialApi.bindVoice(r.actor_id, pending.voice)
+        try {
+          await commercialApi.bindVoice(r.actor_id, pending.voice)
+          setMsg(`达人已创建并绑定音色（ID: ${r.actor_id}）`)
+          setName(''); setPending({}); setLastActorId(null); refresh()
+        } catch (voiceErr) {
+          // #6 半成品恢复：达人已创建但声音绑定失败，明确告知并提供重试
+          setMsg(`⚠️ 达人已创建（ID: ${r.actor_id}），但声音绑定失败：${voiceErr instanceof Error ? voiceErr.message : String(voiceErr)}。可点击"重试绑定"完成。`)
+          refresh() // 刷新让新达人出现在列表中
+        }
+      } else {
+        setMsg(`达人已创建（ID: ${r.actor_id}）。未绑定音色——生成前必须绑定。`)
+        setName(''); setPending({}); refresh()
       }
-      setMsg(`达人已创建${pending.voice != null ? '并绑定音色' : '（未绑定音色——生成前必须绑定）'}`)
-      setName(''); setPending({}); refresh()
+    } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
+  }
+
+  const retryBindVoice = async () => {
+    if (lastActorId == null || pending.voice == null) return
+    try {
+      await commercialApi.bindVoice(lastActorId, pending.voice)
+      setMsg(`✅ 声音绑定成功（达人 ID: ${lastActorId}）`)
+      setLastActorId(null); setPending({}); refresh()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
 
@@ -71,6 +91,9 @@ export function CommercialActorsPage() {
             <Button variant="outline" size="sm" onClick={() => voiceRef.current?.click()}>上传音色样本</Button>
           </div>
           <Button variant="lime" onClick={create}>创建达人</Button>
+          {lastActorId != null && pending.voice != null && (
+            <Button variant="outline" size="sm" onClick={retryBindVoice}>重试绑定音色</Button>
+          )}
         </div>
         <div style={{ display: 'flex', gap: 12, marginTop: 10, alignItems: 'center' }}>
           {(pending.images || []).map(id => <AssetImage key={id} assetId={id} alt="待绑定形象图" />)}

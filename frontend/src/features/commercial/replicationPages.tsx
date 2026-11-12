@@ -85,6 +85,12 @@ export default function CommercialReplicationPage() {
     try {
       const graphValue = await replicationApi.analyze(project.id)
       setGraph(graphValue)
+      // 恢复已保存的镜头服饰选择（刷新回显 #7）
+      const restored: Record<string, number> = {}
+      for (const s of graphValue.shots) {
+        if (s.wardrobe_version_id) restored[s.shot_key] = s.wardrobe_version_id
+      }
+      setWardrobeAssignments(restored)
       setProject({ ...project, status: 'analyzed' })
     } catch {
       const local = fixture || createReplicationFixture({ production_id: project.production_id, mode: project.mode, reference_video_name: referenceVideo, target_product_name: targetProduct, actor_name: actorName, marketing_goal: marketingGoal })
