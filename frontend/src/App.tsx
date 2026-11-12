@@ -35,6 +35,7 @@ import EpisodeStoryboardPage from './pages/drama/episodeCanvas/EpisodeStoryboard
 import TeamInvitationPage from './features/teams/TeamInvitationPage'
 import RequireAuth from './pages/drama/RequireAuth'
 import { CommercialActorsPage, CommercialProductsPage, CommercialWardrobePage } from './features/commercial/libraryPages'
+import { ProductDetailPage, WardrobeDetailPage } from './features/commercial/libraryDetail'
 import { CommercialSettingsPage, CommercialTasksPage } from './features/commercial/workPages'
 import CommercialStudioPage from './features/commercial/studioPage'
 import CommercialTemplatesPage from './features/commercial/templatesPage'
@@ -76,6 +77,8 @@ export default function App() {
         <Route path="/commercial/templates/:versionId" element={<RequireAuth><TemplateVersionDetail /></RequireAuth>} />
         <Route path="/commercial/actors" element={<RequireAuth><CommercialActorsPage /></RequireAuth>} />
         <Route path="/commercial/products" element={<RequireAuth><CommercialProductsPage /></RequireAuth>} />
+        <Route path="/commercial/products/:productId" element={<RequireAuth><ProductDetailPageRouter /></RequireAuth>} />
+        <Route path="/commercial/wardrobes/:wardrobeId" element={<RequireAuth><WardrobeDetailPageRouter /></RequireAuth>} />
         <Route path="/commercial/wardrobes" element={<RequireAuth><CommercialWardrobePage /></RequireAuth>} />
         <Route path="/commercial/studio" element={<RequireAuth><CommercialStudioPage /></RequireAuth>} />
         <Route path="/commercial/replications" element={<RequireAuth><CommercialReplicationPage /></RequireAuth>} />
@@ -126,4 +129,15 @@ export default function App() {
 function CommercialRedirect({ children }: { children: React.ReactElement }) {
   if (COMMERCIAL_PROJECT) return <Navigate to="/commercial/templates" replace />
   return children
+}
+
+
+import { useParams } from 'react-router-dom'
+function ProductDetailPageRouter() {
+  const { productId } = useParams()
+  return <ProductDetailPage productId={Number(productId)} />
+}
+function WardrobeDetailPageRouter() {
+  const { wardrobeId } = useParams()
+  return <WardrobeDetailPage wardrobeId={Number(wardrobeId)} />
 }

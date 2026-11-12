@@ -1325,3 +1325,77 @@ async def set_budget(
     return {"pool_id": pool.id, "scope": pool.scope, "total_usd": str(pool.total_amount),
             "reserved_usd": str(pool.reserved_amount), "settled_usd": str(pool.settled_amount),
             "paused": pool.paused}
+
+
+# ---------------------------------------------------------------- 商品详情
+@router.get("/products/{product_id}", summary="商品详情（含状态/研究/卖点）")
+async def get_product_detail(
+    product_id: int,
+    db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user),
+):
+    """商品完整详情：基本信息、图片、状态图册、研究候选和已确认卖点。"""
+    from app.models_commercial import CvProduct, CvProductVersion, CvProductState, CvProductStateAsset
+    from app.models_commercial import CvProductFactCandidate, CvProductResearchRun, CvProductResearchUsage
+
+    product = await db.get(CvProduct, product_id)
+    if product is None:
+        raise HTTPException(status_code=404, detail="商品不存在")
+    _ensure_writer(product, user)
+
+    version = (await db.execute(
+        select(CvProductVersion).where(CvProductVersion.product_id == product_id)
+        .order_by(CvProductVersion.version.desc()).limit(1)
+    )).scalar_one_or_none()
+
+    # 状态图册
+    states = []
+    if version:
+        state_rows = (await db.execute(
+            select(CvProductState).where(CvProductState.product_version_id == version.id)
+        )).scalars().all()
+        for st in state_rows:
+            assets = (await db.execute(
+                select(CvProductStateAsset).where(CvProductStateAsset.state_id == st.id)
+            )).scalars().all()
+            states.append({
+                "id": st.id, "state_key": st.state_key, "label": st.label,
+                "status": st.status,
+                "assets": [{"asset_id": a.asset_id, "review_status": a.review_status,
+                            "source_type": a.source_type} for a in assets],
+            })
+
+    # 研究运行
+    runs = (await db.execute(
+        select(CvProductResearchRun).where(CvProductResearchRun.product_id == product_id)
+        .order_by(CvProductResearchRun.id.desc()).limit(5)
+    )).scalars().all()
+    research_views = []
+    for run in runs:
+        candidates = (await db.execute(
+            select(CvProductFactCandidate).where(
+                CvProductFactCandidate.research_run_id == run.id)
+        )).scalars().all()
+        usage = (await db.execute(
+            select(CvProductResearchUsage).where(
+                CvProductResearchUsage.research_run_id == run.id)
+        )).scalar_one_or_none()
+        research_views.append({
+            "id": run.id, "status": run.status, "model_id": run.model_id,
+            "refresh_reason": run.refresh_reason,
+            "candidates": [{
+                "id": c.id, "field_name": c.field_name,
+                "value_json": c.value_json, "confidence": float(c.confidence) if c.confidence else None,
+                "status": c.status, "conflict_key": c.conflict_key,
+            } for c in candidates],
+            "usage": {"input_tokens": usage.input_tokens, "output_tokens": usage.output_tokens,
+                       "estimated_amount": str(usage.estimated_amount)} if usage else None,
+        })
+
+    return {
+        "id": product.id, "name": product.name, "form": version.form if version else "",
+        "specs_text": version.specs_text if version else "",
+        "current_version_id": version.id if version else None,
+        "image_asset_ids": (version.image_asset_ids if version else []) or [],
+        "states": states, "research_runs": research_views,
+        "claims": (version.claims if version else []) or [],
+    }
