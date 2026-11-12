@@ -111,6 +111,7 @@ export const replicationApi = {
   get: (id: number) => request<ReplicationProject>(`/api/commercial/replications/${id}`),
   analyze: (id: number) => request<any>(`/api/commercial/replications/${id}/analyze`, { method: 'POST' }).then(normalizeShotGraph),
   getShotGraph: (id: number) => request<any>(`/api/commercial/replications/${id}/shot-graph`).then(normalizeShotGraph),
+  assignWardrobe: (id: number, shotKey: string, wardrobeVersionId: number | null) => request<any>(`/api/commercial/replications/${id}/shot-graph/${encodeURIComponent(shotKey)}/wardrobe`, { method: 'PATCH', body: JSON.stringify({ wardrobe_version_id: wardrobeVersionId }) }),
   confirmShotGraph: (id: number) => request<any>(`/api/commercial/replications/${id}/shot-graph/confirm`, { method: 'POST' }).then(normalizeShotGraph),
   createScript: (id: number) => request<any>(`/api/commercial/replications/${id}/scripts`, { method: 'POST', body: JSON.stringify({}) }).then(normalizeScript),
   listScripts: (id: number) => request<any>(`/api/commercial/replications/${id}/scripts`).then(raw => ({ items: (raw.items || raw.scripts || []).map(normalizeScript) })),

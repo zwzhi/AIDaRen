@@ -255,6 +255,10 @@ async def get_render_plan(
 
 class AnalyzeBody(BaseModel):
     fixture: dict[str, Any] | None = None
+
+
+class WardrobeAssignmentBody(BaseModel):
+    wardrobe_version_id: int | None = None
     duration_ms: int | None = Field(default=None, gt=0)
 
 
@@ -371,6 +375,37 @@ async def get_shot_graph(
         CvShotGraph.revision == revision,
     ).order_by(CvShotGraph.start_ms))).scalars().all())
     return _graph_response(rows, int(revision))
+
+
+@router.patch("/replications/{project_id}/shot-graph/{shot_key}/wardrobe", summary="保存镜头服饰选择")
+async def assign_shot_wardrobe(
+    project_id: int,
+    shot_key: str,
+    body: WardrobeAssignmentBody,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    project = await _get_project(db, project_id, user)
+    revision = await db.scalar(select(func.max(CvShotGraph.revision)).where(
+        CvShotGraph.replication_project_id == project.id
+    ))
+    if revision is None:
+        raise HTTPException(status_code=409, detail="尚未生成 Shot Graph")
+    row = await db.scalar(select(CvShotGraph).where(
+        CvShotGraph.replication_project_id == project.id,
+        CvShotGraph.revision == revision,
+        CvShotGraph.shot_key == shot_key,
+    ))
+    if row is None:
+        raise HTTPException(status_code=404, detail="镜头不存在")
+    action = dict(row.action_json or {})
+    if body.wardrobe_version_id is None:
+        action.pop("wardrobe_version_id", None)
+    else:
+        action["wardrobe_version_id"] = body.wardrobe_version_id
+    row.action_json = action
+    await db.commit()
+    return {"shot_key": shot_key, "wardrobe_version_id": body.wardrobe_version_id, "revision": revision}
 
 
 @router.post("/replications/{project_id}/shot-graph/confirm", summary="确认复刻 Shot Graph")
