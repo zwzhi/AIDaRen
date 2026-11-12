@@ -1,5 +1,6 @@
 import httpx
 import pytest
+import json
 
 from app.services.providers.atlas.image_edit import generate_image_edit_real
 
@@ -9,7 +10,7 @@ async def test_real_image_edit_uses_images_contract_and_maps_async_task():
     captured = {}
 
     def handler(request: httpx.Request):
-        captured.update(request.json())
+        captured.update(json.loads(request.content))
         return httpx.Response(200, json={"data": {"id": "img-task-1", "status": "processing"}})
 
     result = await generate_image_edit_real(
