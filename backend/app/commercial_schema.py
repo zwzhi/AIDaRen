@@ -263,6 +263,9 @@ async def apply_commercial_schema_patches(conn) -> None:
             "voice_render_id": "INTEGER REFERENCES cv_voice_renders(id)",
             "invalidation_reason": "TEXT",
         },
+        "cv_product_versions": {
+            "status": "VARCHAR(16) NOT NULL DEFAULT 'published'",
+        },
         "cv_generation_attempts": {
             "replication_project_id": "INTEGER REFERENCES cv_replication_projects(id)",
             "script_version_id": "INTEGER REFERENCES cv_script_versions(id)",

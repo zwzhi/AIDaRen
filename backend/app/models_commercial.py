@@ -212,6 +212,7 @@ class CvProductVersion(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     product_id: Mapped[int] = mapped_column(ForeignKey("cv_products.id"), index=True)
     version: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(16), default="published")
     form: Mapped[str] = mapped_column(String(32), default="")  # 瓶装|贴片|盒装|...
     specs_text: Mapped[str] = mapped_column(Text, default="")
     image_asset_ids: Mapped[dict | None] = mapped_column(JSON, nullable=True)
