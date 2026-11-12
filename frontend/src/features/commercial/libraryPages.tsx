@@ -2,6 +2,7 @@
  * 达人库 / 商品库（设计体系版）：图片预览、音色试听（鉴权 blob）、授权状态、卖点分组。
  * 业务接口不变（listActors/listProducts/createX/bindVoice/uploadAsset）。
  */
+import { Link } from 'react-router-dom'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import Button from '../../components/ui/Button'
 import CommercialLayout, { CommercialPageHead, MockModeNote } from './CommercialLayout'
@@ -228,6 +229,9 @@ export function CommercialProductsPage() {
               {(p.forbidden_phrases ?? []).length > 0 && (
                 <p className="pf-muted" style={{ fontSize: 12 }}>禁止表述：{(p.forbidden_phrases ?? []).join('、')}</p>
               )}
+              <div style={{ marginTop: 10 }}>
+                <Link to={`/commercial/products/${p.id}`} style={{ fontSize: 13, color: 'var(--pf-ink)', textDecoration: 'underline' }}>查看详情 →</Link>
+              </div>
             </div>
           </div>
         ))}
