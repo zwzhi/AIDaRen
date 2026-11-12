@@ -12,6 +12,7 @@ import './commercial.css'
 /* ---------------------------------------------------------------- 达人库 */
 export function CommercialActorsPage() {
   const [actors, setActors] = useState<ActorItem[]>([])
+  const [selectedActor, setSelectedActor] = useState<ActorItem | null>(null)
   const [name, setName] = useState('')
   const [msg, setMsg] = useState('')
   const [pending, setPending] = useState<{ images?: number[]; voice?: number }>({})
@@ -84,7 +85,7 @@ export function CommercialActorsPage() {
           const latest = a.versions[0]
           const voice = a.voices[0]
           return (
-            <div key={a.id} className="pf-template-card" style={{ cursor: 'default' }}>
+            <div key={a.id} className="pf-template-card" style={{ cursor: 'pointer' }} onClick={() => setSelectedActor(a)}>
               <div style={{ display: 'flex', gap: 10, padding: 14, alignItems: 'center' }}>
                 <AssetImage assetId={latest?.image_asset_ids?.[0]} alt={`${a.name} 形象`} size={88} />
                 <div style={{ minWidth: 0 }}>
@@ -104,6 +105,11 @@ export function CommercialActorsPage() {
           )
         })}
       </div>
+      {selectedActor && <div className="pf-card" style={{ padding: 16, marginTop: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>{selectedActor.name} · 资产详情</h3><Button variant="outline" size="sm" onClick={() => setSelectedActor(null)}>关闭</Button></div>
+        {selectedActor.versions.map(v => <div key={v.id} style={{ marginTop: 14 }}><strong>形象版本 V{v.version}</strong><div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>{v.image_asset_ids.map(id => <AssetImage key={id} assetId={id} alt={`${selectedActor.name} 参考图`} />)}</div></div>)}
+        <div style={{ marginTop: 14 }}><strong>声音版本</strong>{selectedActor.voices.map(v => <div key={v.id} style={{ marginTop: 8 }}><AssetAudio assetId={v.audio_asset_id} /><span className="pf-muted" style={{ marginLeft: 8, fontSize: 12 }}>{v.status}</span></div>)}</div>
+      </div>}
       {!loading && !error && actors.length === 0 && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有达人，先在上方创建。</p>}
     </CommercialLayout>
   )
@@ -119,6 +125,7 @@ type ProductFull = ProductItem & {
 
 export function CommercialProductsPage() {
   const [products, setProducts] = useState<ProductFull[]>([])
+  const [selectedProduct, setSelectedProduct] = useState<ProductFull | null>(null)
   const [name, setName] = useState(''); const [form, setForm] = useState('贴片')
   const [claim, setClaim] = useState(''); const [action, setAction] = useState('手持正面展示')
   const [specs, setSpecs] = useState('')
@@ -193,7 +200,7 @@ export function CommercialProductsPage() {
         {loading && <p className="pf-muted">加载商品中…</p>}
         {!loading && error && <p style={{ color: '#b3261e' }}>加载失败：{error}</p>}
         {products.map(p => (
-          <div key={p.id} className="pf-template-card" style={{ cursor: 'default' }}>
+          <div key={p.id} className="pf-template-card" style={{ cursor: 'pointer' }} onClick={() => setSelectedProduct(p)}>
             <div style={{ display: 'flex', gap: 10, padding: 14, alignItems: 'center' }}>
               <AssetImage assetId={p.image_asset_ids?.[0]} alt={p.name} size={88} />
               <div style={{ minWidth: 0 }}>
@@ -225,6 +232,13 @@ export function CommercialProductsPage() {
           </div>
         ))}
       </div>
+      {selectedProduct && <div className="pf-card" style={{ padding: 16, marginTop: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>{selectedProduct.name} · 商品详情</h3><Button variant="outline" size="sm" onClick={() => setSelectedProduct(null)}>关闭</Button></div>
+        <p className="pf-muted" style={{ fontSize: 12 }}>商品版本 V{selectedProduct.current_version} · {selectedProduct.form || '未填写形态'}</p>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>{(selectedProduct.image_asset_ids || []).map(id => <AssetImage key={id} assetId={id} alt={`${selectedProduct.name} 商品图`} />)}</div>
+        <p style={{ fontSize: 13, marginTop: 12 }}>{selectedProduct.specs_text || '暂无商品描述，开始 AI 研究后会补充商品事实和状态。'}</p>
+        <div className="pf-tags">{(selectedProduct.claims || []).filter(c => c.approved).map(c => <span key={c.claim_id}>{c.text}</span>)}</div>
+      </div>}
       {!loading && !error && products.length === 0 && <p className="pf-muted" style={{ padding: '24px 0', textAlign: 'center' }}>还没有商品，先在上方创建。</p>}
     </CommercialLayout>
   )
@@ -232,6 +246,7 @@ export function CommercialProductsPage() {
 
 export function CommercialWardrobePage() {
   const [items, setItems] = useState<import('./api').WardrobeItem[]>([])
+  const [selectedItem, setSelectedItem] = useState<import('./api').WardrobeItem | null>(null)
   const [name, setName] = useState(''); const [category, setCategory] = useState('上衣')
   const [scope, setScope] = useState('team'); const [assetIds, setAssetIds] = useState<number[]>([])
   const [msg, setMsg] = useState(''); const fileRef = useRef<HTMLInputElement>(null)
@@ -262,8 +277,12 @@ export function CommercialWardrobePage() {
         {msg && <p className="pf-muted" style={{ margin: '10px 0 0' }}>{msg}</p>}
       </div>
       <div className="pf-template-grid">
-        {items.map(item => <div key={item.id} className="pf-template-card"><div style={{ padding: 14 }}><h3 style={{ margin: 0 }}>{item.name}</h3><p className="pf-muted" style={{ fontSize: 12 }}>{item.category} · {item.scope} · {item.versions.length} 个版本</p></div><div className="body"><p className="pf-muted" style={{ fontSize: 12 }}>服饰版本可以绑定到指定达人，也可以在镜头级换装中选择。</p></div></div>)}
+        {items.map(item => <div key={item.id} className="pf-template-card" style={{ cursor: 'pointer' }} onClick={() => setSelectedItem(item)}><div style={{ padding: 14 }}><AssetImage assetId={item.versions[0]?.asset_ids?.[0]} alt={item.name} size={88} /><h3 style={{ margin: '10px 0 0' }}>{item.name}</h3><p className="pf-muted" style={{ fontSize: 12 }}>{item.category} · {item.scope} · {item.versions.length} 个版本</p></div><div className="body"><p className="pf-muted" style={{ fontSize: 12 }}>点击查看完整服饰素材和版本。</p></div></div>)}
       </div>
+      {selectedItem && <div className="pf-card" style={{ padding: 16, marginTop: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}><h3 style={{ margin: 0 }}>{selectedItem.name} · 服饰详情</h3><Button variant="outline" size="sm" onClick={() => setSelectedItem(null)}>关闭</Button></div>
+        {selectedItem.versions.map(version => <div key={version.id} style={{ marginTop: 14 }}><strong>服饰版本 V{version.version}</strong><div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>{version.asset_ids.map(id => <AssetImage key={id} assetId={id} alt={`${selectedItem.name} 服饰图`} />)}</div><p className="pf-muted" style={{ fontSize: 12 }}>{version.description || '暂无描述'}</p></div>)}
+      </div>}
     </CommercialLayout>
   )
 }
