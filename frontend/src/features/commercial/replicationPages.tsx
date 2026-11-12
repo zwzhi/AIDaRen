@@ -46,6 +46,8 @@ export default function CommercialReplicationPage() {
   const [voice, setVoice] = useState<VoiceRender | null>(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState('')
+  // #13 Mock 兜底开关：默认 false，生产模式下失败显示错误而非假装成功
+  const [allowMockFallback, setAllowMockFallback] = useState(false)
   const [fixture, setFixture] = useState<LocalState | null>(null)
   const [wardrobes, setWardrobes] = useState<WardrobeItem[]>([])
   const [wardrobeAssignments, setWardrobeAssignments] = useState<Record<string, number>>({})
@@ -72,10 +74,14 @@ export default function CommercialReplicationPage() {
       const value = await replicationApi.create(payload)
       setProject(value)
       setMsg('复刻项目已创建')
-    } catch {
-      const local = createReplicationFixture(payload)
-      setFixture(local); setProject(local.project); setGraph(null); setScript(null); setAnchors(null); setVoice(null)
-      setMsg('后端未连接，已切换本地 Mock/Fixture')
+    } catch (err) {
+      if (allowMockFallback) {
+        const local = createReplicationFixture(payload)
+        setFixture(local); setProject(local.project); setGraph(null); setScript(null); setAnchors(null); setVoice(null)
+        setMsg('⚠️ Mock Fixture：后端未连接，结果为本地模拟（非真实数据）')
+      } else {
+        setMsg(`❌ 复刻项目创建失败：${err instanceof Error ? err.message : String(err)}。请检查后端连接后重试。`)
+      }
     } finally { setBusy('') }
   }
 
@@ -92,9 +98,13 @@ export default function CommercialReplicationPage() {
       }
       setWardrobeAssignments(restored)
       setProject({ ...project, status: 'analyzed' })
-    } catch {
-      const local = fixture || createReplicationFixture({ production_id: project.production_id, mode: project.mode, reference_video_name: referenceVideo, target_product_name: targetProduct, actor_name: actorName, marketing_goal: marketingGoal })
-      local.project.status = 'analyzed'; setFixture(local); setProject(local.project); setGraph(local.shotGraph); setScript(null); setAnchors(null); setVoice(null); setMsg('分析使用本地 Fixture 完成')
+    } catch (err) {
+      if (allowMockFallback) {
+        const local = fixture || createReplicationFixture({ production_id: project.production_id, mode: project.mode, reference_video_name: referenceVideo, target_product_name: targetProduct, actor_name: actorName, marketing_goal: marketingGoal })
+        local.project.status = 'analyzed'; setFixture(local); setProject(local.project); setGraph(local.shotGraph); setScript(null); setAnchors(null); setVoice(null); setMsg('⚠️ Mock Fixture：分析为本地模拟（非真实结果）')
+      } else {
+        setMsg(`❌ 分析失败：${err instanceof Error ? err.message : String(err)}。请重试或检查后端状态。`)
+      }
     } finally { setBusy('') }
   }
 
@@ -102,7 +112,13 @@ export default function CommercialReplicationPage() {
     if (!project || !graph) return
     setBusy('graph')
     try { setGraph(await replicationApi.confirmShotGraph(project.id)) }
-    catch { setGraph({ ...graph, confirmed: true }); setProject({ ...project, status: 'script_review' }); setMsg('Shot Graph 已确认（Mock）') }
+    catch (err) {
+      if (allowMockFallback) {
+        setGraph({ ...graph, confirmed: true }); setProject({ ...project, status: 'script_review' }); setMsg('⚠️ Mock：Shot Graph 确认为本地模拟（非后端真实确认）')
+      } else {
+        setMsg(`❌ Shot Graph 确认失败：${err instanceof Error ? err.message : String(err)}。`)
+      }
+    }
     finally { setBusy('') }
   }
 
@@ -153,6 +169,12 @@ export default function CommercialReplicationPage() {
     <CommercialLayout>
       <CommercialPageHead title="商业短视频复刻" desc="使用现有 production_id，从分析到 Mock 预览完成可审核的最小流程。" backTo="/commercial/studio" backLabel="返回制作工作台" />
       <MockModeNote />
+      <p className="pf-muted" style={{ fontSize: 12, margin: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+          <input type="checkbox" checked={allowMockFallback} onChange={e => setAllowMockFallback(e.target.checked)} />
+          允许 Mock 兜底（后端失败时使用本地模拟数据）
+        </label>
+      </p>
 
       <div className="pf-card" style={{ padding: 16, marginBottom: 16 }}>
         <h3 style={{ margin: '0 0 12px', fontSize: 16 }}>① 创建入口</h3>
