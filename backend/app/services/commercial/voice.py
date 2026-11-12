@@ -20,7 +20,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models_commercial import (
     CvActor,
+    CvActorVersion,
     CvMediaAsset,
+    CvProduction,
     CvReplicationProject,
     CvRightsEvidence,
     CvScriptVersion,
@@ -223,19 +225,20 @@ class VoiceAdapter:
 
     async def _probe_real(self, *, transport: httpx.AsyncBaseTransport | None = None) -> VoiceCapabilities:
         from dataclasses import replace
+        from app.config import get_settings
 
         caps = self.capabilities
-        if not self.base_url:
+        settings = get_settings()
+        base_url = self.base_url or str(getattr(settings, "atlas_base_url", "") or "")
+        if not base_url:
             result = replace(caps, capability_verified=False, probe_status="failed",
                              probe_source="local", probe_error="base_url is not configured")
             self.capabilities = result
             return result
-        from app.config import get_settings
-        settings = get_settings()
         path = str(getattr(settings, "atlas_capabilities_path", "/api/v1/model/capabilities") or "/api/v1/model/capabilities")
         if not path.startswith("/"):
             path = "/" + path
-        url = f"{self.base_url.rstrip('/')}{path}"
+        url = f"{base_url.rstrip('/')}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
             async with httpx.AsyncClient(
@@ -372,6 +375,30 @@ class VoiceStrategy:
             raise VoiceRenderError("SCRIPT_NOT_FOUND", "脚本版本不存在")
         if voice is None:
             raise VoiceRenderError("VOICE_PROFILE_NOT_FOUND", "授权音色不存在")
+
+        # Resolve the production snapshot before synthesis.  A voice profile is
+        # an actor-owned asset; accepting an arbitrary profile here would allow
+        # a caller that knows a valid ID to render another creator's voice into
+        # this project's video.  The production creation endpoint enforces the
+        # same invariant, but the render service is also called directly by
+        # workers and must defend its own boundary.
+        project_id = request.replication_project_id or script.replication_project_id
+        if request.replication_project_id is not None and request.replication_project_id != script.replication_project_id:
+            raise VoiceRenderError("SCRIPT_PROJECT_MISMATCH", "脚本不属于指定复刻项目")
+        project = await self.db.get(CvReplicationProject, project_id)
+        if project is None:
+            raise VoiceRenderError("REPLICATION_PROJECT_NOT_FOUND", "复刻项目不存在")
+        production = await self.db.get(CvProduction, project.production_id)
+        if production is None:
+            raise VoiceRenderError("PRODUCTION_NOT_FOUND", "复刻项目关联作品不存在")
+        actor_version = await self.db.get(CvActorVersion, production.actor_version_id)
+        if actor_version is None:
+            raise VoiceRenderError("ACTOR_VERSION_NOT_FOUND", "作品关联达人版本不存在")
+        if voice.actor_id != actor_version.actor_id:
+            raise VoiceRenderError(
+                "VOICE_BINDING_INVALID",
+                "声音样本未绑定当前作品选择的达人",
+            )
         if voice.status != "active":
             raise VoiceRenderError("VOICE_UNAUTHORIZED", "音色授权已撤销")
         if voice.authorized_until is not None:
@@ -390,7 +417,6 @@ class VoiceStrategy:
         if not decision.allowed:
             raise VoiceRenderError(decision.reason_code, "; ".join(decision.reasons))
 
-        project_id = request.replication_project_id or script.replication_project_id
         full_hash = _script_hash(script.script_json)
         text = _script_text(script.script_json)
         synthesis = self.tts.synthesize(text, voice_version=request.voice_version)
@@ -444,7 +470,6 @@ class VoiceStrategy:
             voice_profile_id=voice.id,
             model_id="mock-tts",
             model_version=synthesis.voice_version,
-            voice_version=synthesis.voice_version,
             audio_asset_id=asset.id,
             duration_ms=synthesis.duration_ms,
             script_hash=full_hash,

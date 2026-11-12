@@ -14,7 +14,7 @@ export function CommercialActorsPage() {
   const [actors, setActors] = useState<ActorItem[]>([])
   const [name, setName] = useState('')
   const [msg, setMsg] = useState('')
-  const [pending, setPending] = useState<{ image?: number; voice?: number }>({})
+  const [pending, setPending] = useState<{ images?: number[]; voice?: number }>({})
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const imgRef = useRef<HTMLInputElement>(null)
@@ -30,9 +30,9 @@ export function CommercialActorsPage() {
   useEffect(refresh, [refresh])
 
   const create = async () => {
-    if (pending.image == null) { setMsg('请先上传达人形象图'); return }
+    if (!pending.images?.length) { setMsg('请先上传达人形象图'); return }
     try {
-      const r = await commercialApi.createActor(name || '未命名达人', [pending.image], '页面创建')
+      const r = await commercialApi.createActor(name || '未命名达人', pending.images, '页面创建')
       if (pending.voice != null) {
         await commercialApi.bindVoice(r.actor_id, pending.voice)
       }
@@ -54,9 +54,9 @@ export function CommercialActorsPage() {
           </div>
           <div className="cv-field" style={{ margin: 0 }}>
             <label>形象图（授权）</label>
-            <input ref={imgRef} type="file" accept="image/*" hidden onChange={async e => {
-              const f = e.target.files?.[0]; if (!f) return
-              try { const a = await uploadAsset(f, 'owned_actor_image', '达人授权形象'); setPending(p => ({ ...p, image: a.id })) } catch (err) { setMsg(String(err)) }
+            <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={async e => {
+              const files = Array.from(e.target.files || []); if (!files.length) return
+              try { const assets = await Promise.all(files.map(f => uploadAsset(f, 'owned_actor_image', '达人授权形象'))); setPending(p => ({ ...p, images: [...(p.images || []), ...assets.map(a => a.id)] })) } catch (err) { setMsg(String(err)) }
             }} />
             <Button variant="outline" size="sm" onClick={() => imgRef.current?.click()}>上传形象图</Button>
           </div>
@@ -71,7 +71,7 @@ export function CommercialActorsPage() {
           <Button variant="lime" onClick={create}>创建达人</Button>
         </div>
         <div style={{ display: 'flex', gap: 12, marginTop: 10, alignItems: 'center' }}>
-          {pending.image != null && <AssetImage assetId={pending.image} alt="待绑定形象图" />}
+          {(pending.images || []).map(id => <AssetImage key={id} assetId={id} alt="待绑定形象图" />)}
           {pending.voice != null && <AssetAudio assetId={pending.voice} />}
           {msg && <span style={{ fontSize: 13, color: 'var(--pf-ink)' }}>{msg}</span>}
         </div>
@@ -123,7 +123,7 @@ export function CommercialProductsPage() {
   const [claim, setClaim] = useState(''); const [action, setAction] = useState('手持正面展示')
   const [specs, setSpecs] = useState('')
   const [description, setDescription] = useState(''); const [sourceUrl, setSourceUrl] = useState('')
-  const [imageId, setImageId] = useState<number | null>(null)
+  const [imageIds, setImageIds] = useState<number[]>([])
   const [msg, setMsg] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -139,14 +139,14 @@ export function CommercialProductsPage() {
   useEffect(refresh, [refresh])
 
   const create = async () => {
-    if (imageId == null) { setMsg('请先上传商品图'); return }
+    if (!imageIds.length) { setMsg('请先上传商品图'); return }
     try {
       await commercialApi.createProduct({
-        name: name || '未命名商品', form, specs_text: specs, image_asset_ids: [imageId],
+        name: name || '未命名商品', form, specs_text: specs, image_asset_ids: imageIds,
         claims: claim ? [{ claim_id: `c-${Date.now()}`, text: claim, approved: true, source: '品牌资料' }] : [],
         forbidden_phrases: [], allowed_actions: action ? [action] : [],
       })
-      setMsg('商品已创建'); setName(''); setClaim(''); setSpecs(''); setDescription(''); setSourceUrl(''); setImageId(null); refresh()
+      setMsg('商品已创建'); setName(''); setClaim(''); setSpecs(''); setDescription(''); setSourceUrl(''); setImageIds([]); refresh()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
 
@@ -175,16 +175,16 @@ export function CommercialProductsPage() {
             <input className="cv-input" value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="粘贴官网或旗舰店链接" /></div>
           <div className="cv-field" style={{ margin: 0 }}>
             <label>商品图</label>
-            <input ref={imgRef} type="file" accept="image/*" hidden onChange={async e => {
-              const f = e.target.files?.[0]; if (!f) return
-              try { const a = await uploadAsset(f, 'owned_product_image', '商品图'); setImageId(a.id) } catch (err) { setMsg(String(err)) }
+            <input ref={imgRef} type="file" accept="image/*" multiple hidden onChange={async e => {
+              const files = Array.from(e.target.files || []); if (!files.length) return
+              try { const assets = await Promise.all(files.map(f => uploadAsset(f, 'owned_product_image', '商品图'))); setImageIds(prev => [...prev, ...assets.map(a => a.id)]) } catch (err) { setMsg(String(err)) }
             }} />
             <Button variant="outline" size="sm" onClick={() => imgRef.current?.click()}>上传商品图</Button>
           </div>
           <Button variant="lime" onClick={create}>创建商品</Button>
         </div>
         <div style={{ display: 'flex', gap: 12, marginTop: 10, alignItems: 'center' }}>
-          {imageId != null && <AssetImage assetId={imageId} alt="待保存商品图" />}
+          {imageIds.map(id => <AssetImage key={id} assetId={id} alt="待保存商品图" />)}
           {msg && <span style={{ fontSize: 13 }}>{msg}</span>}
         </div>
       </div>

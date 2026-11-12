@@ -242,7 +242,8 @@ class Settings(BaseSettings):
 
     cors_origins: str = (
         "http://localhost:5173,http://127.0.0.1:5173,"
-        "http://localhost:5174,http://127.0.0.1:5174"
+        "http://localhost:5174,http://127.0.0.1:5174,"
+        "http://localhost:5180,http://127.0.0.1:5180"
     )
     # Comma-separated emails promoted to admin on startup (existing users only)
     admin_bootstrap_emails: str = ""

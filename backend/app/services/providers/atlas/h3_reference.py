@@ -525,17 +525,18 @@ class H3VideoAdapter:
     ) -> H3Capabilities:
         caps = self.capabilities or DRAFT_H3_CAPABILITIES
         model_id = self.model_id
-        if not self.base_url:
+        from app.config import get_settings
+        settings = get_settings()
+        base_url = self.base_url or str(getattr(settings, "atlas_base_url", "") or "")
+        if not base_url:
             result = replace(caps, capability_verified=False, probe_status="failed",
                              probe_source="local", probe_error="base_url is not configured")
             self.capabilities = result
             return result
-        from app.config import get_settings
-        settings = get_settings()
         path = str(getattr(settings, "atlas_capabilities_path", "/api/v1/model/capabilities") or "/api/v1/model/capabilities")
         if not path.startswith("/"):
             path = "/" + path
-        url = f"{self.base_url.rstrip('/')}{path}"
+        url = f"{base_url.rstrip('/')}{path}"
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         try:
             async with httpx.AsyncClient(
