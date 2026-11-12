@@ -10,7 +10,10 @@ from dataclasses import dataclass
 import hashlib
 import json
 from datetime import UTC, datetime
+import re
 from typing import Any, Mapping
+
+import httpx
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,7 +24,10 @@ from app.models_commercial_v2 import (
     CvProductResearchRun,
     CvProductSource,
     CvProductVariant,
+    CvProductResearchUsage,
 )
+from app.services.commercial.gemini_product_research import research_product_with_gemini
+from app.services.providers.atlas.media import assert_public_https_url
 
 
 @dataclass(frozen=True)
@@ -262,4 +268,87 @@ async def list_product_states(db: AsyncSession, product_version_id: int) -> list
         CvProductState.product_version_id == product_version_id,
         CvProductState.status.in_(("candidate", "approved")),
     ).order_by(CvProductState.id))).scalars().all())
+
+
+def _extract_page_text_and_images(html: str) -> tuple[str, list[str]]:
+    text = re.sub(r"<(script|style|noscript|svg)\b[^>]*>.*?</\1>", " ", html, flags=re.I | re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    text = " ".join(text.split())[:24000]
+    images: list[str] = []
+    for match in re.findall(r"https?[^\"'\\s>]+?(?:\.png|\.jpg|\.jpeg|\.webp)", html, flags=re.I):
+        if match not in images:
+            images.append(match)
+        if len(images) >= 4:
+            break
+    return text, images
+
+
+async def run_real_product_research(
+    db: AsyncSession,
+    run: CvProductResearchRun,
+    *,
+    source_url: str,
+    api_key: str,
+    base_url: str,
+    model_id: str,
+) -> dict[str, Any]:
+    assert_public_https_url(source_url)
+    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0), follow_redirects=True) as client:
+        response = await client.get(source_url, headers={"User-Agent": "AIDaRen-product-research/1.0"})
+    response.raise_for_status()
+    page_text, image_urls = _extract_page_text_and_images(response.text)
+    result = await research_product_with_gemini(
+        page_url=source_url,
+        page_text=page_text,
+        image_urls=image_urls,
+        api_key=api_key,
+        base_url=base_url,
+        model_id=model_id,
+    )
+    run.model_id = result.model_id
+    run.model_version = "atlas-live"
+    source = (await db.execute(select(CvProductSource).where(
+        CvProductSource.research_run_id == run.id,
+        CvProductSource.url == source_url,
+    ))).scalars().first()
+    if source is not None:
+        source.snapshot_json = {"page_text_length": len(page_text), "image_urls": image_urls}
+    for field_name, value in (result.payload.get("product") or {}).items():
+        db.add(CvProductFactCandidate(
+            research_run_id=run.id, variant_id=run.variant_id,
+            field_name=f"product.{field_name}", value_json=value,
+            confidence=0.9, status="candidate",
+        ))
+    for item in result.payload.get("states") or []:
+        db.add(CvProductFactCandidate(
+            research_run_id=run.id, variant_id=run.variant_id,
+            field_name=f"state:{item.get('state_key')}", value_json=item,
+            confidence=item.get("confidence"), status="candidate",
+        ))
+    for item in result.payload.get("capabilities") or []:
+        db.add(CvProductFactCandidate(
+            research_run_id=run.id, variant_id=run.variant_id,
+            field_name=f"capability:{item.get('capability_key')}", value_json=item,
+            confidence=item.get("confidence"), status="candidate",
+        ))
+    for index, item in enumerate(result.payload.get("claims") or []):
+        db.add(CvProductFactCandidate(
+            research_run_id=run.id, variant_id=run.variant_id,
+            field_name=f"claim:{index}", value_json=item,
+            confidence=0.75, status="candidate",
+        ))
+    db.add(CvProductResearchUsage(
+        research_run_id=run.id,
+        provider="atlas",
+        model_id=result.model_id,
+        input_tokens=result.input_tokens,
+        output_tokens=result.output_tokens,
+        estimated_amount=result.estimated_amount_usd,
+        currency="USD",
+        price_source="atlas:gemini-token-estimate",
+        raw_usage_json=result.raw_usage,
+    ))
+    run.status = "candidate"
+    await db.commit()
+    return result.payload
 

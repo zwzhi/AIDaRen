@@ -11,9 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.deps import get_current_user
 from app.models import User
+from app.config import get_settings
 from app.models_commercial import CvProduct
 from app.models_commercial_v2 import CvProductFactCandidate, CvProductResearchRun
-from app.services.commercial.product_research import merge_product_candidates, start_product_research
+from app.services.commercial.product_research import merge_product_candidates, run_real_product_research, start_product_research
 
 router = APIRouter()
 
@@ -32,6 +33,7 @@ class ProductResearchCreateBody(BaseModel):
     name: str = ""
     description: str = ""
     source_urls: list[str] = Field(default_factory=list)
+    real_gemini: bool = False
 
 
 class ProductResearchReviewBody(BaseModel):
@@ -79,6 +81,23 @@ async def create_product_research(
         source_urls=body.source_urls,
         user_id=user.id,
     )
+    if body.real_gemini:
+        settings = get_settings()
+        if not settings.atlas_api_key:
+            raise HTTPException(status_code=503, detail="Atlas API 未配置")
+        if not body.source_urls:
+            raise HTTPException(status_code=422, detail="真实商品研究需要至少一个公开商品页 URL")
+        try:
+            await run_real_product_research(
+                db,
+                run,
+                source_url=body.source_urls[0],
+                api_key=settings.atlas_api_key,
+                base_url=settings.atlas_base_url,
+                model_id=settings.gemini_analysis_model_id or "google/gemini-3-flash-preview",
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"商品研究失败：{exc}") from exc
     candidates = list((await db.execute(select(CvProductFactCandidate).where(
         CvProductFactCandidate.research_run_id == run.id,
     ))).scalars().all())
