@@ -124,7 +124,11 @@ class ImageEditAdapter:
             if isinstance(payload.get("data"), dict):
                 payload = dict(payload["data"])
             if isinstance(payload.get("capabilities"), dict):
-                payload = dict(payload["capabilities"])
+                nested = dict(payload["capabilities"])
+                for key in ("model", "model_id", "capability_verified", "verified"):
+                    if key in payload and key not in nested:
+                        nested[key] = payload[key]
+                payload = nested
             if not isinstance(payload, dict):
                 raise ValueError("capability response must be an object")
             response_model = str(payload.get("model") or payload.get("model_id") or self.model_id).strip()
