@@ -1224,6 +1224,10 @@ async def get_export(
         "srt_edited_at": export.srt_edited_at.isoformat() if export.srt_edited_at else None,
         "subtitled_path": export.subtitled_path,
         "selections": export.selections_json,
+        "render_batch_id": export.render_batch_id,
+        "frozen_version_hash": export.frozen_version_hash,
+        "segment_outputs": export.segment_outputs_json,
+        "quality_check": export.quality_check_json,
         "created_at": export.created_at.isoformat() if export.created_at else None,
     }
 

@@ -551,7 +551,11 @@ class H3VideoAdapter:
             if isinstance(payload.get("data"), dict):
                 payload = dict(payload["data"])
             if isinstance(payload.get("capabilities"), dict):
-                payload = dict(payload["capabilities"])
+                nested = dict(payload["capabilities"])
+                for key in ("model", "model_id", "capability_verified", "verified"):
+                    if key in payload and key not in nested:
+                        nested[key] = payload[key]
+                payload = nested
             if not isinstance(payload, dict):
                 raise ValueError("capability response must be an object")
             # An explicit provider assertion is required.  A generic 200/schema
