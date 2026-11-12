@@ -450,6 +450,8 @@ async def _apply_schema_patches(engine_override: AsyncEngine | None = None) -> N
             await conn.execute(text("ALTER TABLE cv_product_versions ADD COLUMN description TEXT DEFAULT ''"))
         if cpv and "source_url" not in cpv:
             await conn.execute(text("ALTER TABLE cv_product_versions ADD COLUMN source_url VARCHAR(2048) DEFAULT ''"))
+        if cpv and "asset_roles" not in cpv:
+            await conn.execute(text("ALTER TABLE cv_product_versions ADD COLUMN asset_roles JSON"))
 
         cex = await _pg_columns(conn, "cv_exports")
         if cex and "kind" not in cex:

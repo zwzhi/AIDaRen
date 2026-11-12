@@ -43,6 +43,9 @@ export default function CommercialTemplatesPage() {
   const [msg, setMsg] = useState('')
   const [errorMsg, setErrorMsg] = useState('')
   const [analysis, setAnalysis] = useState<{ runId: number } | null>(null)
+  // #11 校准草稿持久化：刷新/关闭页面后可恢复
+  const DRAFT_KEY = 'cv_template_calibration_draft'
+  const [draftRestored, setDraftRestored] = useState(false)
   const [videoUrl, setVideoUrl] = useState<string | null>(null)
   const [calib, setCalib] = useState<CalibShot[]>([])
   const [openShot, setOpenShot] = useState<number | null>(null)
@@ -111,6 +114,31 @@ export default function CommercialTemplatesPage() {
     }
   }
 
+  // 草稿自动保存（calib/name 变化时）
+  useEffect(() => {
+    if (!calib.length && !name) return
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify({ calib, name, runId: analysis?.runId, savedAt: Date.now() }))
+    } catch { /* localStorage 不可用时静默 */ }
+  }, [calib, name, analysis?.runId])
+
+  // 页面加载时恢复草稿
+  useEffect(() => {
+    if (draftRestored) return
+    setDraftRestored(true)
+    try {
+      const raw = localStorage.getItem(DRAFT_KEY)
+      if (!raw) return
+      const draft = JSON.parse(raw)
+      if (draft.calib?.length && draft.savedAt > Date.now() - 24 * 3600 * 1000) {
+        setCalib(draft.calib)
+        setName(draft.name || '')
+        if (draft.runId) setAnalysis({ runId: draft.runId })
+        setMsg(`已恢复未发布的校准草稿（${draft.calib.length} 个镜头），请检查后发布。`)
+      }
+    } catch { /* 解析失败忽略 */ }
+  }, [draftRestored])
+
   const patchShot = (idx: number, patch: Partial<CalibShot>) =>
     setCalib(prev => prev.map((s, i) => (i === idx ? { ...s, ...patch } : s)))
 
@@ -132,6 +160,7 @@ export default function CommercialTemplatesPage() {
     try {
       await commercialApi.createTemplate(name || '未命名模板', analysis.runId, calib as never[])
       setMsg('模板已发布（V1）')
+      try { localStorage.removeItem(DRAFT_KEY) } catch { /* ignore */ }
       setName(''); setAnalysis(null); setCalib([]); setOpenShot(null)
       if (videoUrl) { URL.revokeObjectURL(videoUrl); setVideoUrl(null) }
       refresh()

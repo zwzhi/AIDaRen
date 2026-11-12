@@ -204,7 +204,10 @@ const refreshList = useCallback(() => {
                 {a.unit_key && <span className="pf-tags"><span>{a.unit_key}</span></span>}
                 {a.attempt_no != null && a.attempt_no > 1 && <span className="pf-tags"><span>第{a.attempt_no}次</span></span>}
                 <span className={`cv-status-tag ${a.status === 'REVIEW_APPROVED' ? 'is-approved' : a.status === 'REVIEW_REJECTED' ? 'is-rejected' : a.status === 'GENERATED' ? 'is-generated' : 'is-pending'}`}>{a.status === 'REVIEW_APPROVED' ? '已通过' : a.status === 'REVIEW_REJECTED' ? '已驳回' : a.status === 'GENERATED' ? '已生成' : a.status === 'PROVIDER_RUNNING' ? '生成中' : a.status === 'QUEUED' ? '排队中' : a.status}</span>
-                <span className="pf-muted" style={{ fontSize: 12 }}>{a.prediction_id ?? ''}</span>
+                <span className="pf-muted" style={{ fontSize: 12 }}>
+                  {a.prediction_id ?? ''}{a.prediction_id?.startsWith('MOCK-') && '（模拟）'}
+                </span>
+                {a.output_asset_key && <span className="cv-status-tag is-generated">有输出</span>}
                 <span style={{ flex: 1 }} />
                 {a.status === 'GENERATED' && (
                   <>

@@ -119,7 +119,15 @@ export function CommercialActorsPage() {
               </div>
               <div className="body">
                 <p className="pf-muted" style={{ fontSize: 12 }}>音色试听（授权样本仅作绑定，不直接入片）：</p>
-                {voice ? <AssetAudio assetId={voice.audio_asset_id} /> : <p style={{ fontSize: 13 }}>未绑定音色（不能生成口播）</p>}
+                {voice ? (
+                  <div>
+                    <AssetAudio assetId={voice.audio_asset_id} />
+                    <p className="pf-muted" style={{ fontSize: 11, margin: '4px 0 0' }}>
+                      授权样本（候选）→ 需审核后建立声音档案 → 生成主轨
+                      {voice.authorized_until ? ` · 授权至 ${voice.authorized_until.slice(0, 10)}` : ' · 长期授权'}
+                    </p>
+                  </div>
+                ) : <p style={{ fontSize: 13 }}>未绑定音色（不能生成口播）</p>}
                 <div className="pf-tags">
                   <span>{voice ? (voice.authorized_until ? `授权至 ${voice.authorized_until.slice(0, 10)}` : '长期授权') : '待授权'}</span>
                   <span>{a.versions.length} 个版本</span>
@@ -231,12 +239,7 @@ export function CommercialProductsPage() {
             </div>
             <div className="body">
               <div className="cv-card-actions" style={{ marginBottom: 8 }}>
-                <Button variant="outline" size="sm" onClick={async () => {
-                  try {
-                    const run = await commercialApi.researchProduct(p.id, { image_asset_ids: p.image_asset_ids ?? [], name: p.name, description: p.description || p.specs_text || '', source_urls: p.source_url ? [p.source_url] : [], real_gemini: Boolean(p.source_url) })
-                    setMsg(`商品 #${p.id} 研究任务 #${run.id} 已创建，候选 ${run.candidates.length} 条`)
-                  } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
-                }}>开始 AI 研究</Button>
+                {/* #9: 研究入口移到商品详情页，卡片只保留查看 */}
               </div>
               {(p.claims ?? []).filter(c => c.approved).length > 0
                 ? <div className="pf-tags">{(p.claims ?? []).filter(c => c.approved).map(c => <span key={c.claim_id}>{c.text}</span>)}</div>

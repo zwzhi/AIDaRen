@@ -511,6 +511,7 @@ async def list_products(
                     "description": latest_row.description if latest_row and hasattr(latest_row, 'description') else "",
                     "source_url": latest_row.source_url if latest_row and hasattr(latest_row, 'source_url') else "",
                     "image_asset_ids": latest_row.image_asset_ids or [] if latest_row else [],
+                    "asset_roles": getattr(latest_row, 'asset_roles', None) or {},
                     "claims": latest_row.claims or [] if latest_row else [],
                     "forbidden_phrases": latest_row.forbidden_phrases or [] if latest_row else [],
                     "allowed_actions": latest_row.allowed_actions or [] if latest_row else []})

@@ -111,10 +111,21 @@ def parse_analysis_response(
     text = "".join(str(part.get("text") or "") for part in parts).strip()
     if not text:
         raise AnalysisSchemaInvalid("响应内容为空")
+    # Argon Developer 实测响应可能带 Markdown 代码围栏（```json ... ```），先清洗
+    cleaned = text
+    if cleaned.startswith("```"):
+        first_nl = cleaned.find("\n")
+        if first_nl > 0:
+            cleaned = cleaned[first_nl + 1:]
+        if cleaned.rstrip().endswith("```"):
+            cleaned = cleaned.rstrip()[:-3]
+        cleaned = cleaned.strip()
     try:
-        data = json.loads(text)
+        data = json.loads(cleaned)
     except json.JSONDecodeError as exc:
-        raise AnalysisSchemaInvalid(f"模型输出不是合法 JSON（可能被截断）：{exc}") from exc
+        raise AnalysisSchemaInvalid(
+            f"模型输出不是合法 JSON（可能被截断或含 Markdown 围栏）：{exc}"
+        ) from exc
     try:
         shots = [
             AnalysisShot(
