@@ -109,6 +109,8 @@ class Settings(BaseSettings):
     h3_developer_reference_model_id: str = ""
     # Image2.6 图生图适配器模型 ID；真实提交前必须通过本地/沙箱能力探针。
     image_edit_model_id: str = ""
+    image_edit_preview_model_id: str = ""
+    image_edit_final_model_id: str = ""
     # 私有素材存储根（相对 backend 目录或绝对路径）；绝不放入 /static 公开目录
     commercial_storage_root: str = "data/commercial"
     commercial_max_reference_duration_seconds: int = 180

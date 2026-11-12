@@ -60,8 +60,8 @@
 ### 3.1 模型约束
 
 - Gemini 3 Flash Preview 负责视频分析、结构提取、脚本编排和生成后质检。
-- Image2.6 作为图生图适配器的工作模型名。真实 model ID、端点、输入槽位和返回格式必须通过能力探针确认后写入配置。
-- MiniMax H3 Developer Reference 负责视频生成。H3 只消费冻结后的锚帧、脚本、声音条件和生成参数。
+- GPT Image 2.6 Flare Edit 负责候选锚帧，GPT Image 2.6 Sunburst Edit 负责最终批准锚帧。真实 Atlas model ID、端点、输入槽位和返回格式必须通过能力探针确认后写入配置。
+- MiniMax H3 Developer Reference-to-Video 负责视频生成。H3 只消费冻结后的锚帧、脚本、声音条件和生成参数。
 - H3 的多图顺序、音频参考、声音复刻、最大参考图数、分辨率和响应映射必须通过真实或沙箱契约验证。
 
 ### 3.2 输出约束
@@ -155,6 +155,7 @@ H3 生成 9:16 低清预览
 职责：
 
 - 输入源锚帧、达人图、可选商品图和镜头编辑提示。
+- 候选阶段默认使用 GPT Image 2.6 Flare Edit，最终锚帧默认使用 GPT Image 2.6 Sunburst Edit。
 - 输出替换锚帧、模型响应 ID、图片 URL、尺寸、hash 和成本信息。
 - 支持单张重做，不重新解析视频和重写全部脚本。
 
