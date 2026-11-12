@@ -183,12 +183,20 @@ type ProductionItem = {
       setQuotes(prev => ({ ...prev, [unitKey]: { id: q.quote_id, amount: q.amount } }))
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
+  // #12 生成确认：显示报价详情，用户明确点击确认后才执行
+  const [confirmUnit, setConfirmUnit] = useState<string | null>(null)
   const generateUnit = async (unitKey: string) => {
     if (!productionId) return
-    const q = quotes[unitKey]; if (!q) { setMsg('请先报价并确认'); return }
+    const q = quotes[unitKey]; if (!q) { setMsg('请先报价'); return }
+    setConfirmUnit(unitKey) // 打开确认对话框
+  }
+  const executeGenerate = async () => {
+    if (!productionId || !confirmUnit) return
+    const q = quotes[confirmUnit]; if (!q) return
+    setConfirmUnit(null)
     try {
-      const r = await commercialApi.generate(productionId, unitKey, q.id, `${reqIdBase.current}-${unitKey}`)
-      setMsg(r.attempt_status === 'GENERATED' ? `单元 ${unitKey} 生成完成（模拟输出）` : `单元 ${unitKey}：${r.attempt_status}`)
+      const r = await commercialApi.generate(productionId, confirmUnit, q.id, `${reqIdBase.current}-${confirmUnit}`)
+      setMsg(r.attempt_status === 'GENERATED' ? `单元 ${confirmUnit} 生成完成（模拟输出）` : `单元 ${confirmUnit}：${r.attempt_status}`)
       refreshDetail(productionId)
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
@@ -336,6 +344,21 @@ type ProductionItem = {
                   : <>
                       <span className="pf-muted" style={{ fontSize: 13 }}>预计 ${quotes[u.unit_key].amount}（模拟价）</span>
                       <Button variant="lime" size="sm" onClick={() => generateUnit(u.unit_key)}>② 确认并生成</Button>
+                      {confirmUnit === u.unit_key && quotes[u.unit_key] && (
+                        <div className="pf-card" style={{ padding: 12, marginTop: 8, border: '1px solid var(--pf-lime)' }}>
+                          <p style={{ margin: '0 0 6px', fontWeight: 600 }}>确认生成 — {u.unit_key}</p>
+                          <div style={{ fontSize: 13, color: 'var(--pf-muted)', marginBottom: 8 }}>
+                            <div>报价金额：<strong>${quotes[u.unit_key].amount}</strong>（模拟价）</div>
+                            <div>生成时长：{u.request_duration_ms / 1000}秒</div>
+                            <div>采用区间：{(u.adopt_ranges || []).map(([, s, e]) => `${s / 1000}-${e / 1000}s`).join('、')}</div>
+                            <div>分辨率：{detail?.resolution_id} · 画幅：{detail?.aspect_ratio}</div>
+                          </div>
+                          <div style={{ display: 'flex', gap: 8 }}>
+                            <Button variant="lime" size="sm" onClick={executeGenerate}>确认并生成</Button>
+                            <Button variant="outline" size="sm" onClick={() => setConfirmUnit(null)}>取消</Button>
+                          </div>
+                        </div>
+                      )}
                     </>}
               </div>
               <div style={{ padding: '0 12px 4px' }}>
