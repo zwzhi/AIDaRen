@@ -359,6 +359,7 @@ async def apply_commercial_schema_patches(conn) -> None:
         models_commercial_v2.CvProductResearchRun.__table__,
         models_commercial_v2.CvProductSource.__table__,
         models_commercial_v2.CvProductFactCandidate.__table__,
+        models_commercial_v2.CvProductResearchUsage.__table__,
         models_commercial_v2.CvProductState.__table__,
         models_commercial_v2.CvProductStateAsset.__table__,
         models_commercial_v2.CvProductCapability.__table__,
