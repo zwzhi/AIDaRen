@@ -233,7 +233,7 @@ export function CommercialProductsPage() {
 export function CommercialWardrobePage() {
   const [items, setItems] = useState<import('./api').WardrobeItem[]>([])
   const [name, setName] = useState(''); const [category, setCategory] = useState('上衣')
-  const [scope, setScope] = useState('team'); const [assetId, setAssetId] = useState<number | null>(null)
+  const [scope, setScope] = useState('team'); const [assetIds, setAssetIds] = useState<number[]>([])
   const [msg, setMsg] = useState(''); const fileRef = useRef<HTMLInputElement>(null)
   const refresh = useCallback(() => { commercialApi.listWardrobes().then(r => setItems(r.items)).catch(e => setMsg(String(e))) }, [])
   useEffect(refresh, [refresh])
@@ -241,8 +241,8 @@ export function CommercialWardrobePage() {
     if (!name.trim()) { setMsg('请填写服饰名称'); return }
     try {
       const item = await commercialApi.createWardrobe({ name, category, scope })
-      if (assetId != null) await commercialApi.createWardrobeVersion(item.id, { asset_ids: [assetId] })
-      setMsg('服饰已保存，可在镜头换装中选择'); setName(''); setAssetId(null); refresh()
+      if (assetIds.length) await commercialApi.createWardrobeVersion(item.id, { asset_ids: assetIds })
+      setMsg('服饰已保存，可在镜头换装中选择'); setName(''); setAssetIds([]); refresh()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
   }
   return (
@@ -254,11 +254,11 @@ export function CommercialWardrobePage() {
           <div className="cv-field" style={{ margin: 0, width: 220 }}><label>服饰名称</label><input className="cv-input" value={name} onChange={e => setName(e.target.value)} placeholder="如：米色针织套装" /></div>
           <div className="cv-field" style={{ margin: 0, width: 140 }}><label>分类</label><select className="cv-input" value={category} onChange={e => setCategory(e.target.value)}><option>上衣</option><option>下装</option><option>连衣裙</option><option>外套</option><option>鞋子</option><option>配饰</option><option>完整穿搭</option></select></div>
           <div className="cv-field" style={{ margin: 0, width: 140 }}><label>共享范围</label><select className="cv-input" value={scope} onChange={e => setScope(e.target.value)}><option value="personal">个人</option><option value="team">团队</option><option value="project">项目</option></select></div>
-          <input ref={fileRef} type="file" accept="image/*" hidden onChange={async e => { const f=e.target.files?.[0]; if(!f)return; try{const a=await uploadAsset(f,'owned_wardrobe_image','授权服饰素材');setAssetId(a.id)}catch(err){setMsg(String(err))} }} />
+          <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={async e => { const files=Array.from(e.target.files || []); if(!files.length)return; try{const assets=await Promise.all(files.map(f=>uploadAsset(f,'owned_wardrobe_image','授权服饰素材')));setAssetIds(prev=>[...prev,...assets.map(a=>a.id)])}catch(err){setMsg(String(err))} }} />
           <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>上传服饰图</Button>
           <Button variant="lime" onClick={create}>保存服饰</Button>
         </div>
-        {assetId != null && <div style={{ marginTop: 10 }}><AssetImage assetId={assetId} alt="待保存服饰图" /></div>}
+        {assetIds.length > 0 && <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>{assetIds.map(id => <AssetImage key={id} assetId={id} alt="待保存服饰图" />)}</div>}
         {msg && <p className="pf-muted" style={{ margin: '10px 0 0' }}>{msg}</p>}
       </div>
       <div className="pf-template-grid">
