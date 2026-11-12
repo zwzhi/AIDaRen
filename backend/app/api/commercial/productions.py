@@ -450,6 +450,8 @@ class ProductCreateBody(BaseModel):
     name: str
     form: str = ""
     specs_text: str = ""
+    description: str = ""
+    source_url: str = ""
     image_asset_ids: list[int] = Field(default_factory=list)
     claims: list[dict[str, Any]] = Field(default_factory=list)
     forbidden_phrases: list[str] = Field(default_factory=list)
@@ -468,7 +470,11 @@ async def create_product(
     await db.flush()
     version = CvProductVersion(
         product_id=product.id, version=1, form=body.form, specs_text=body.specs_text,
-        image_asset_ids=body.image_asset_ids, claims=body.claims,
+        description=body.description, source_url=body.source_url,
+        image_asset_ids=body.image_asset_ids,
+        # 安全约束：客户端创建的卖点一律为候选（approved=false），
+        # 只有通过商品研究审核流程才能置为已确认
+        claims=[{**c, "approved": False} for c in body.claims],
         forbidden_phrases=body.forbidden_phrases, allowed_actions=body.allowed_actions,
         published_by=user.id,
     )
@@ -502,6 +508,8 @@ async def list_products(
                     "latest_version_id": latest,
                     "form": latest_row.form if latest_row else "",
                     "specs_text": latest_row.specs_text if latest_row else "",
+                    "description": latest_row.description if latest_row and hasattr(latest_row, 'description') else "",
+                    "source_url": latest_row.source_url if latest_row and hasattr(latest_row, 'source_url') else "",
                     "image_asset_ids": latest_row.image_asset_ids or [] if latest_row else [],
                     "claims": latest_row.claims or [] if latest_row else [],
                     "forbidden_phrases": latest_row.forbidden_phrases or [] if latest_row else [],

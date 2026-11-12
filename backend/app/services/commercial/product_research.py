@@ -293,7 +293,7 @@ async def run_real_product_research(
     model_id: str,
 ) -> dict[str, Any]:
     assert_public_https_url(source_url)
-    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0), follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=httpx.Timeout(45.0, connect=10.0), follow_redirects=False) as client:
         response = await client.get(source_url, headers={"User-Agent": "AIDaRen-product-research/1.0"})
     response.raise_for_status()
     page_text, image_urls = _extract_page_text_and_images(response.text)
@@ -352,3 +352,24 @@ async def run_real_product_research(
     await db.commit()
     return result.payload
 
+
+
+async def _fetch_with_hop_validation(
+    url: str, *, max_redirects: int = 5, timeout: float = 30.0
+) -> httpx.Response:
+    """逐跳校验重定向的受控网页抓取（防 SSRF）。每跳验证 HTTPS+公网 IP。"""
+    from app.services.providers.atlas.media import _validate_url, SsrfBlockedError
+
+    current = url
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        for _ in range(max_redirects + 1):
+            _validate_url(current)
+            resp = await client.get(current)
+            if resp.status_code in (301, 302, 303, 307, 308):
+                location = resp.headers.get("location", "")
+                if not location:
+                    raise SsrfBlockedError("重定向缺少 Location")
+                current = str(httpx.URL(current).join(location))
+                continue
+            return resp
+    raise SsrfBlockedError("重定向次数超限")

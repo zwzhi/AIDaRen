@@ -102,7 +102,7 @@ export const commercialApi = {
     }),
   listActors: () => request<{ items: ActorItem[] }>('/api/commercial/actors'),
   createProduct: (payload: {
-    name: string; form: string; image_asset_ids: number[]; claims: { claim_id: string; text: string; approved: boolean; source?: string }[]
+    name: string; form?: string; description?: string; source_url?: string; image_asset_ids: number[]; claims: { claim_id: string; text: string; approved: boolean; source?: string }[]
     forbidden_phrases: string[]; allowed_actions: string[]; specs_text?: string
   }) => request<{ product_id: number; product_version_id: number }>('/api/commercial/products', {
     method: 'POST', body: JSON.stringify(payload),

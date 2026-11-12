@@ -215,6 +215,8 @@ class CvProductVersion(Base):
     status: Mapped[str] = mapped_column(String(16), default="published")
     form: Mapped[str] = mapped_column(String(32), default="")  # 瓶装|贴片|盒装|...
     specs_text: Mapped[str] = mapped_column(Text, default="")
+    description: Mapped[str] = mapped_column(Text, default="")  # 自然语言商品描述
+    source_url: Mapped[str] = mapped_column(String(2048), default="")  # 官方商品页
     image_asset_ids: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     claims: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # [{claim_id,text,approved,source}]
     forbidden_phrases: Mapped[dict | None] = mapped_column(JSON, nullable=True)

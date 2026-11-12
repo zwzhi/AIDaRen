@@ -118,6 +118,7 @@ export function CommercialActorsPage() {
 
 /* ---------------------------------------------------------------- 商品库 */
 type ProductFull = ProductItem & {
+  description?: string; source_url?: string;
   form?: string; specs_text?: string
   claims?: Array<{ claim_id: string; text: string; approved?: boolean }>
   forbidden_phrases?: string[]; allowed_actions?: string[]
@@ -127,8 +128,8 @@ type ProductFull = ProductItem & {
 export function CommercialProductsPage() {
   const [products, setProducts] = useState<ProductFull[]>([])
   const [selectedProduct, setSelectedProduct] = useState<ProductFull | null>(null)
-  const [name, setName] = useState(''); const [form, setForm] = useState('贴片')
-  const [claim, setClaim] = useState(''); const [action, setAction] = useState('手持正面展示')
+  const [name, setName] = useState('')
+  const [claim, setClaim] = useState('')
   const [specs, setSpecs] = useState('')
   const [description, setDescription] = useState(''); const [sourceUrl, setSourceUrl] = useState('')
   const [imageIds, setImageIds] = useState<number[]>([])
@@ -150,9 +151,10 @@ export function CommercialProductsPage() {
     if (!imageIds.length) { setMsg('请先上传商品图'); return }
     try {
       await commercialApi.createProduct({
-        name: name || '未命名商品', form, specs_text: specs, image_asset_ids: imageIds,
-        claims: claim ? [{ claim_id: `c-${Date.now()}`, text: claim, approved: true, source: '品牌资料' }] : [],
-        forbidden_phrases: [], allowed_actions: action ? [action] : [],
+        name: name || '未命名商品', specs_text: specs,
+        description, source_url: sourceUrl, image_asset_ids: imageIds,
+        claims: claim ? [{ claim_id: `c-${Date.now()}`, text: claim, approved: false, source: '用户创建（待审核）' }] : [],
+        forbidden_phrases: [], allowed_actions: [],
       })
       setMsg('商品已创建'); setName(''); setClaim(''); setSpecs(''); setDescription(''); setSourceUrl(''); setImageIds([]); refresh()
     } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
@@ -167,14 +169,7 @@ export function CommercialProductsPage() {
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div className="cv-field" style={{ margin: 0, width: 180 }}><label>商品名称</label>
             <input className="cv-input" value={name} onChange={e => setName(e.target.value)} /></div>
-          <div className="cv-field" style={{ margin: 0, width: 120 }}><label>形态</label>
-            <select className="cv-input" value={form} onChange={e => setForm(e.target.value)}>
-              <option value="贴片">贴片</option><option value="瓶装">瓶装</option><option value="盒装">盒装</option>
-            </select></div>
-          <div className="cv-field" style={{ margin: 0, width: 240 }}><label>审核卖点（进入台词的唯一来源）</label>
-            <input className="cv-input" value={claim} onChange={e => setClaim(e.target.value)} /></div>
-          <div className="cv-field" style={{ margin: 0, width: 180 }}><label>允许展示动作</label>
-            <input className="cv-input" value={action} onChange={e => setAction(e.target.value)} /></div>
+          {/* 简化主流程：图+名称+描述即可创建；卖点/形态/动作由 AI 研究后确认 */}
           <div className="cv-field" style={{ margin: 0, width: 200 }}><label>规格（可选）</label>
             <input className="cv-input" value={specs} onChange={e => setSpecs(e.target.value)} /></div>
           <div className="cv-field" style={{ margin: 0, width: 260 }}><label>商品描述（可选）</label>
@@ -215,7 +210,7 @@ export function CommercialProductsPage() {
               <div className="cv-card-actions" style={{ marginBottom: 8 }}>
                 <Button variant="outline" size="sm" onClick={async () => {
                   try {
-                    const run = await commercialApi.researchProduct(p.id, { image_asset_ids: p.image_asset_ids ?? [], name: p.name, description: description || p.specs_text || '', source_urls: sourceUrl ? [sourceUrl] : [], real_gemini: Boolean(sourceUrl) })
+                    const run = await commercialApi.researchProduct(p.id, { image_asset_ids: p.image_asset_ids ?? [], name: p.name, description: p.description || p.specs_text || '', source_urls: p.source_url ? [p.source_url] : [], real_gemini: Boolean(p.source_url) })
                     setMsg(`商品 #${p.id} 研究任务 #${run.id} 已创建，候选 ${run.candidates.length} 条`)
                   } catch (e) { setMsg(e instanceof Error ? e.message : String(e)) }
                 }}>开始 AI 研究</Button>

@@ -251,11 +251,17 @@ async def test_mock_e2e_template_reuse_two_material_sets(client, admin, db_sessi
     async def _product(name: str, img: int, claim: str) -> int:
         resp = await client.post("/api/commercial/products", json={
             "name": name, "form": "贴片", "image_asset_ids": [img],
-            "claims": [{"claim_id": f"{name}-c1", "text": claim, "approved": True, "source": "品牌资料"}],
+            "claims": [{"claim_id": f"{name}-c1", "text": claim, "approved": False, "source": "测试"}],
             "forbidden_phrases": [], "allowed_actions": ["贴敷手背展示"],
         })
         assert resp.status_code == 200, resp.text
-        return resp.json()["product_version_id"]
+        vid = resp.json()["product_version_id"]
+        # 审核：服务端强制 approved=False，需手动审核后才可用于台词
+        from app.models_commercial import CvProductVersion
+        version = await db_session.get(CvProductVersion, vid)
+        version.claims = [{**c, "approved": True} for c in (version.claims or [])]
+        await db_session.commit()
+        return vid
 
     p1 = await _product("P1贴片", p1_img, "贴敷八小时持久清凉")
     p2 = await _product("P2贴片", p2_img, "温和不刺激敏感肌可用")

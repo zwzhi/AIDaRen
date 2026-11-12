@@ -444,6 +444,13 @@ async def _apply_schema_patches(engine_override: AsyncEngine | None = None) -> N
             await conn.execute(text("ALTER TABLE cv_generation_attempts ADD COLUMN output_asset_key VARCHAR(128)"))
         if cgac and "params_json" not in cgac:
             await conn.execute(text("ALTER TABLE cv_generation_attempts ADD COLUMN params_json JSON"))
+        # 商品版本补列（描述+来源URL）
+        cpv = await _pg_columns(conn, "cv_product_versions")
+        if cpv and "description" not in cpv:
+            await conn.execute(text("ALTER TABLE cv_product_versions ADD COLUMN description TEXT DEFAULT ''"))
+        if cpv and "source_url" not in cpv:
+            await conn.execute(text("ALTER TABLE cv_product_versions ADD COLUMN source_url VARCHAR(2048) DEFAULT ''"))
+
         cex = await _pg_columns(conn, "cv_exports")
         if cex and "kind" not in cex:
             await conn.execute(text("ALTER TABLE cv_exports ADD COLUMN kind VARCHAR(24) DEFAULT 'master'"))
